@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/SandboxIR/Utils.h"
+#include "TestUtils.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -26,44 +27,23 @@
 
 using namespace llvm;
 
-struct UtilsTest : public testing::Test {
-  LLVMContext C;
-  std::unique_ptr<Module> M;
-
-  void parseIR(LLVMContext &C, const char *IR) {
-    SMDiagnostic Err;
-    M = parseAssemblyString(IR, Err, C);
-    if (!M)
-      Err.print("UtilsTest", errs());
-  }
-  BasicBlock *getBasicBlockByName(Function &F, StringRef Name) {
-    for (BasicBlock &BB : F)
-      if (BB.getName() == Name)
-        return &BB;
-    llvm_unreachable("Expected to find basic block!");
-  }
-};
-
-TEST_F(UtilsTest, getMemoryLocation) {
-  parseIR(C, R"IR(
+TEST_F(SandboxIRTest, getMemoryLocation) {
+  setUp("foo", R"IR(
 define void @foo(ptr %arg0) {
-  %ld = load i8, ptr %arg0
-  ret void
-}
+   %ld = load i8, ptr %arg0
+   ret void
+ }
 )IR");
-  llvm::Function *LLVMF = &*M->getFunction("foo");
-  auto *LLVMBB = &*LLVMF->begin();
+  auto *LLVMBB = &*LLVM->F->begin();
   auto *LLVMLd = cast<llvm::LoadInst>(&*LLVMBB->begin());
-  sandboxir::Context Ctx(C);
-  sandboxir::Function *F = Ctx.createFunction(LLVMF);
   auto *BB = &*F->begin();
   auto *Ld = cast<sandboxir::LoadInst>(&*BB->begin());
   EXPECT_EQ(sandboxir::Utils::memoryLocationGetOrNone(Ld),
             MemoryLocation::getOrNone(LLVMLd));
 }
 
-TEST_F(UtilsTest, GetPointerDiffInBytes) {
-  parseIR(C, R"IR(
+TEST_F(SandboxIRTest, GetPointerDiffInBytes) {
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr) {
   %gep0 = getelementptr inbounds float, ptr %ptr, i64 0
   %gep1 = getelementptr inbounds float, ptr %ptr, i64 1
@@ -87,21 +67,8 @@ define void @foo(ptr %ptr) {
   ret void
 }
 )IR");
-  llvm::Function &LLVMF = *M->getFunction("foo");
-  DominatorTree DT(LLVMF);
-  TargetLibraryInfoImpl TLII;
-  TargetLibraryInfo TLI(TLII);
-  DataLayout DL(M->getDataLayout());
-  AssumptionCache AC(LLVMF);
-  BasicAAResult BAA(DL, LLVMF, TLI, AC, &DT);
-  AAResults AA(TLI);
-  AA.addAAResult(BAA);
-  LoopInfo LI(DT);
-  ScalarEvolution SE(LLVMF, TLI, AC, DT, LI);
-  sandboxir::Context Ctx(C);
 
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto &BB = *F.begin();
+  auto &BB = *F->begin();
   auto It = std::next(BB.begin(), 4);
   auto *L0 = cast<sandboxir::LoadInst>(&*It++);
   auto *L1 = cast<sandboxir::LoadInst>(&*It++);
@@ -118,6 +85,7 @@ define void @foo(ptr %ptr) {
   [[maybe_unused]] auto *V3L2 = cast<sandboxir::LoadInst>(&*It++);
   [[maybe_unused]] auto *V3L3 = cast<sandboxir::LoadInst>(&*It++);
 
+  ScalarEvolution &SE = LLVM->SE;
   // getPointerDiffInBytes
   EXPECT_EQ(*sandboxir::Utils::getPointerDiffInBytes(L0, L1, SE), 4);
   EXPECT_EQ(*sandboxir::Utils::getPointerDiffInBytes(L0, L2, SE), 8);
@@ -136,8 +104,8 @@ define void @foo(ptr %ptr) {
   EXPECT_FALSE(sandboxir::Utils::atLowerAddress(L3, V3L3, SE));
 }
 
-TEST_F(UtilsTest, GetExpected) {
-  parseIR(C, R"IR(
+TEST_F(SandboxIRTest, GetExpected) {
+  setUp("foo", R"IR(
 define float @foo(float %v, ptr %ptr) {
   %add = fadd float %v, %v
   store float %v, ptr %ptr
@@ -147,11 +115,7 @@ define void @bar(float %v, ptr %ptr) {
   ret void
 }
 )IR");
-  llvm::Function &Foo = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  Ctx.createFunction(&Foo);
-  auto *FooBB = cast<sandboxir::BasicBlock>(Ctx.getValue(&*Foo.begin()));
+  auto *FooBB = cast<sandboxir::BasicBlock>(Ctx->getValue(&*LLVM->F->begin()));
   auto FooIt = FooBB->begin();
   auto Add = cast<sandboxir::Instruction>(&*FooIt++);
   auto *S0 = cast<sandboxir::Instruction>(&*FooIt++);
@@ -171,15 +135,15 @@ define void @bar(float %v, ptr %ptr) {
 
   // getExpectedValue for void returns
   llvm::Function &Bar = *M->getFunction("bar");
-  Ctx.createFunction(&Bar);
-  auto *BarBB = cast<sandboxir::BasicBlock>(Ctx.getValue(&*Bar.begin()));
+  Ctx->createFunction(&Bar);
+  auto *BarBB = cast<sandboxir::BasicBlock>(Ctx->getValue(&*Bar.begin()));
   auto BarIt = BarBB->begin();
   auto *RetV = cast<sandboxir::Instruction>(&*BarIt++);
   EXPECT_EQ(sandboxir::Utils::getExpectedValue(RetV), nullptr);
 }
 
-TEST_F(UtilsTest, GetNumBits) {
-  parseIR(C, R"IR(
+TEST_F(SandboxIRTest, GetNumBits) {
+  setUp("foo", R"IR(
 define void @foo(float %arg0, double %arg1, i8 %arg2, i64 %arg3, ptr %arg4) {
 bb0:
   %ld0 = load float, ptr %arg4
@@ -189,15 +153,12 @@ bb0:
   ret void
 }
 )IR");
-  llvm::Function &Foo = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-  sandboxir::Function *F = Ctx.createFunction(&Foo);
-  const DataLayout &DL = M->getDataLayout();
+  const DataLayout &DL = LLVM->DL;
   // getNumBits for scalars via the Value overload
   EXPECT_EQ(sandboxir::Utils::getNumBits(F->getArg(0), DL),
-            DL.getTypeSizeInBits(Type::getFloatTy(C)));
+            DL.getTypeSizeInBits(Type::getFloatTy(LLVMCtx)));
   EXPECT_EQ(sandboxir::Utils::getNumBits(F->getArg(1), DL),
-            DL.getTypeSizeInBits(Type::getDoubleTy(C)));
+            DL.getTypeSizeInBits(Type::getDoubleTy(LLVMCtx)));
   EXPECT_EQ(sandboxir::Utils::getNumBits(F->getArg(2), DL), 8u);
   EXPECT_EQ(sandboxir::Utils::getNumBits(F->getArg(3), DL), 64u);
 
@@ -209,15 +170,15 @@ bb0:
   auto *L3 = cast<sandboxir::LoadInst>(&*It++);
   // getNumBits for scalars via the Instruction overload
   EXPECT_EQ(sandboxir::Utils::getNumBits(L0),
-            DL.getTypeSizeInBits(Type::getFloatTy(C)));
+            DL.getTypeSizeInBits(Type::getFloatTy(LLVMCtx)));
   EXPECT_EQ(sandboxir::Utils::getNumBits(L1),
-            DL.getTypeSizeInBits(Type::getDoubleTy(C)));
+            DL.getTypeSizeInBits(Type::getDoubleTy(LLVMCtx)));
   EXPECT_EQ(sandboxir::Utils::getNumBits(L2), 8u);
   EXPECT_EQ(sandboxir::Utils::getNumBits(L3), 64u);
 }
 
-TEST_F(UtilsTest, GetMemBase) {
-  parseIR(C, R"IR(
+TEST_F(SandboxIRTest, GetMemBase) {
+  setUp("foo", R"IR(
 define void @foo(ptr %ptrA, float %val, ptr %ptrB) {
 bb:
   %gepA0 = getelementptr float, ptr %ptrA, i32 0
@@ -231,10 +192,6 @@ bb:
   ret void
 }
 )IR");
-  llvm::Function &Foo = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-  sandboxir::Function *F = Ctx.createFunction(&Foo);
-
   auto It = std::next(F->begin()->begin(), 4);
   auto *St0 = cast<sandboxir::StoreInst>(&*It++);
   auto *St1 = cast<sandboxir::StoreInst>(&*It++);

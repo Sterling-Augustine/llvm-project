@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "TestUtils.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -26,42 +27,21 @@
 
 using namespace llvm;
 
-struct SandboxIRTest : public testing::Test {
-  LLVMContext C;
-  std::unique_ptr<Module> M;
-
-  void parseIR(LLVMContext &C, const char *IR) {
-    SMDiagnostic Err;
-    M = parseAssemblyString(IR, Err, C);
-    if (!M)
-      Err.print("SandboxIRTest", errs());
-  }
-  BasicBlock *getBasicBlockByName(Function &F, StringRef Name) {
-    for (BasicBlock &BB : F)
-      if (BB.getName() == Name)
-        return &BB;
-    llvm_unreachable("Expected to find basic block!");
-  }
-};
-
 TEST_F(SandboxIRTest, ClassID) {
-  parseIR(C, R"IR(
+  setUp("Foo", R"IR(
 define void @foo(i32 %v1) {
   %add = add i32 %v1, 42
   ret void
 }
 )IR");
-  llvm::Function *LLVMF = &*M->getFunction("foo");
-  llvm::BasicBlock *LLVMBB = &*LLVMF->begin();
+  llvm::BasicBlock *LLVMBB = &*LLVM->F->begin();
   llvm::Instruction *LLVMAdd = &*LLVMBB->begin();
   auto *LLVMC = cast<llvm::Constant>(LLVMAdd->getOperand(1));
 
-  sandboxir::Context Ctx(C);
-  sandboxir::Function *F = Ctx.createFunction(LLVMF);
   sandboxir::Argument *Arg0 = F->getArg(0);
   sandboxir::BasicBlock *BB = &*F->begin();
   sandboxir::Instruction *AddI = &*BB->begin();
-  sandboxir::Constant *Const0 = cast<sandboxir::Constant>(Ctx.getValue(LLVMC));
+  sandboxir::Constant *Const0 = cast<sandboxir::Constant>(Ctx->getValue(LLVMC));
 
   EXPECT_TRUE(isa<sandboxir::Function>(F));
   EXPECT_FALSE(isa<sandboxir::Function>(Arg0));
@@ -111,42 +91,39 @@ define void @foo(i32 %v1) {
 }
 
 TEST_F(SandboxIRTest, ConstantInt) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %v0) {
   %add0 = add i32 %v0, 42
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  auto *LLVMBB = &*LLVMF.begin();
+  auto *LLVMBB = &*LLVM->F->begin();
   auto *LLVMAdd0 = &*LLVMBB->begin();
   auto *LLVMFortyTwo = cast<llvm::ConstantInt>(LLVMAdd0->getOperand(1));
-  sandboxir::Context Ctx(C);
 
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto &BB = *F.begin();
+  auto &BB = *F->begin();
   auto It = BB.begin();
   auto *Add0 = cast<sandboxir::BinaryOperator>(&*It++);
   auto *FortyTwo = cast<sandboxir::ConstantInt>(Add0->getOperand(1));
 
   // Check that creating an identical constant gives us the same object.
   auto *NewCI =
-      sandboxir::ConstantInt::get(sandboxir::Type::getInt32Ty(Ctx), 42);
+      sandboxir::ConstantInt::get(sandboxir::Type::getInt32Ty(*Ctx), 42);
   EXPECT_EQ(NewCI, FortyTwo);
   {
     // Check getTrue(Ctx).
     auto *True = sandboxir::ConstantInt::getTrue(Ctx);
-    EXPECT_EQ(True, Ctx.getValue(llvm::ConstantInt::getTrue(C)));
+    EXPECT_EQ(True, Ctx.getValue(llvm::ConstantInt::getTrue(LLVMCtx)));
     // Check getFalse(Ctx).
     auto *False = sandboxir::ConstantInt::getFalse(Ctx);
-    EXPECT_EQ(False, Ctx.getValue(llvm::ConstantInt::getFalse(C)));
+    EXPECT_EQ(False, Ctx.getValue(llvm::ConstantInt::getFalse(LLVMCtx)));
     // Check getBool(Ctx).
     auto *Bool = sandboxir::ConstantInt::getBool(Ctx, true);
-    EXPECT_EQ(Bool, Ctx.getValue(llvm::ConstantInt::getBool(C, true)));
+    EXPECT_EQ(Bool, Ctx.getValue(llvm::ConstantInt::getBool(LLVMCtx, true)));
   }
   {
-    auto *Int1Ty = sandboxir::Type::getInt1Ty(Ctx);
-    auto *LLVMInt1Ty = llvm::Type::getInt1Ty(C);
+    auto *Int1Ty = sandboxir::Type::getInt1Ty(*Ctx);
+    auto *LLVMInt1Ty = llvm::Type::getInt1Ty(LLVMCtx);
     // Check getTrue(Ty).
     auto *True = sandboxir::ConstantInt::getTrue(Int1Ty);
     EXPECT_EQ(True, Ctx.getValue(llvm::ConstantInt::getTrue(LLVMInt1Ty)));
@@ -158,8 +135,8 @@ define void @foo(i32 %v0) {
     EXPECT_EQ(Bool, Ctx.getValue(llvm::ConstantInt::getBool(LLVMInt1Ty, true)));
   }
 
-  auto *Int32Ty = sandboxir::Type::getInt32Ty(Ctx);
-  auto *LLVMInt32Ty = llvm::Type::getInt32Ty(C);
+  auto *Int32Ty = sandboxir::Type::getInt32Ty(*Ctx);
+  auto *LLVMInt32Ty = llvm::Type::getInt32Ty(LLVMCtx);
   {
     // Check get(Type, V).
     auto *FortyThree = sandboxir::ConstantInt::get(Int32Ty, 43);
@@ -174,7 +151,7 @@ define void @foo(i32 %v0) {
     auto *LLVMFortyThree =
         llvm::ConstantInt::get(LLVMInt32Ty, 43, /*IsSigned=*/true);
     EXPECT_NE(FortyThree, FortyTwo);
-    EXPECT_EQ(FortyThree, Ctx.getValue(LLVMFortyThree));
+    EXPECT_EQ(FortyThree, Ctx->getValue(LLVMFortyThree));
   }
 
   {
@@ -182,7 +159,7 @@ define void @foo(i32 %v0) {
     auto *FortyThree =
         sandboxir::ConstantInt::get(sandboxir::IntegerType::get(Ctx, 32), 43);
     auto *LLVMFortyThree =
-        llvm::ConstantInt::get(llvm::IntegerType::get(C, 32), 43);
+        llvm::ConstantInt::get(llvm::IntegerType::get(LLVMCtx, 32), 43);
     EXPECT_NE(FortyThree, FortyTwo);
     EXPECT_EQ(FortyThree, Ctx.getValue(LLVMFortyThree));
   }
@@ -190,8 +167,8 @@ define void @foo(i32 %v0) {
     // Check get(IntegerType, V, IsSigned).
     auto *FortyThree = sandboxir::ConstantInt::get(
         sandboxir::IntegerType::get(Ctx, 32), 43, /*IsSigned=*/true);
-    auto *LLVMFortyThree = llvm::ConstantInt::get(llvm::IntegerType::get(C, 32),
-                                                  43, /*IsSigned=*/true);
+    auto *LLVMFortyThree = llvm::ConstantInt::get(
+        llvm::IntegerType::get(LLVMCtx, 32), 43, /*IsSigned=*/true);
     EXPECT_NE(FortyThree, FortyTwo);
     EXPECT_EQ(FortyThree, Ctx.getValue(LLVMFortyThree));
   }
@@ -201,7 +178,7 @@ define void @foo(i32 %v0) {
     auto *FortyThree = sandboxir::ConstantInt::getSigned(
         sandboxir::IntegerType::get(Ctx, 32), 43);
     auto *LLVMFortyThree =
-        llvm::ConstantInt::getSigned(llvm::IntegerType::get(C, 32), 43);
+        llvm::ConstantInt::getSigned(llvm::IntegerType::get(LLVMCtx, 32), 43);
     EXPECT_NE(FortyThree, FortyTwo);
     EXPECT_EQ(FortyThree, Ctx.getValue(LLVMFortyThree));
   }
@@ -216,7 +193,7 @@ define void @foo(i32 %v0) {
     // Check get(Ctx, APInt).
     APInt APInt43(32, 43);
     auto *FortyThree = sandboxir::ConstantInt::get(Ctx, APInt43);
-    auto *LLVMFortyThree = llvm::ConstantInt::get(C, APInt43);
+    auto *LLVMFortyThree = llvm::ConstantInt::get(LLVMCtx, APInt43);
     EXPECT_NE(FortyThree, FortyTwo);
     EXPECT_EQ(FortyThree, Ctx.getValue(LLVMFortyThree));
   }
@@ -227,7 +204,7 @@ define void @foo(i32 %v0) {
     auto *FortyThree = sandboxir::ConstantInt::get(
         sandboxir::IntegerType::get(Ctx, 32), Str, Radix);
     auto *LLVMFortyThree =
-        llvm::ConstantInt::get(llvm::IntegerType::get(C, 32), Str, Radix);
+        llvm::ConstantInt::get(llvm::IntegerType::get(LLVMCtx, 32), Str, Radix);
     EXPECT_NE(FortyThree, FortyTwo);
     EXPECT_EQ(FortyThree, Ctx.getValue(LLVMFortyThree));
   }
@@ -297,18 +274,14 @@ define void @foo(i32 %v0) {
 }
 
 TEST_F(SandboxIRTest, ConstantFP) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(float %v0, double %v1) {
   %fadd0 = fadd float %v0, 42.0
   %fadd1 = fadd double %v1, 43.0
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto &BB = *F.begin();
+  auto &BB = *F->begin();
   auto It = BB.begin();
   auto *FAdd0 = cast<sandboxir::BinaryOperator>(&*It++);
   auto *FAdd1 = cast<sandboxir::BinaryOperator>(&*It++);
@@ -455,7 +428,7 @@ define void @foo(float %v0, double %v1) {
 TEST_F(SandboxIRTest, ConstantAggregate) {
   // Note: we are using i42 to avoid the creation of ConstantDataVector or
   // ConstantDataArray.
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
   %array = extractvalue [2 x i42] [i42 0, i42 1], 0
   %struct = extractvalue {i42, i42} {i42 0, i42 1}, 0
@@ -463,11 +436,7 @@ define void @foo() {
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto &BB = *F.begin();
+  auto &BB = *F->begin();
   auto It = BB.begin();
   auto *I0 = &*It++;
   auto *I1 = &*It++;
@@ -527,7 +496,7 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, ConstantAggregateZero) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr, {i32, i8} %v1, <2 x i8> %v2) {
   %extr0 = extractvalue [2 x i8] zeroinitializer, 0
   %extr1 = extractvalue {i32, i8} zeroinitializer, 0
@@ -535,11 +504,7 @@ define void @foo(ptr %ptr, {i32, i8} %v1, <2 x i8> %v2) {
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto &BB = *F.begin();
+  auto &BB = *F->begin();
   auto It = BB.begin();
   auto *Extr0 = &*It++;
   auto *Extr1 = &*It++;
@@ -596,16 +561,12 @@ define void @foo(ptr %ptr, {i32, i8} %v1, <2 x i8> %v2) {
 }
 
 TEST_F(SandboxIRTest, ConstantPointerNull) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define ptr @foo() {
   ret ptr null
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto &BB = *F.begin();
+  auto &BB = *F->begin();
   auto It = BB.begin();
   auto *Ret = cast<sandboxir::ReturnInst>(&*It++);
   // Check classof() and creation.
@@ -623,7 +584,7 @@ define ptr @foo() {
 }
 
 TEST_F(SandboxIRTest, PoisonValue) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
   %i0 = add i32 poison, poison
   %i1 = add <2 x i32> poison, poison
@@ -631,11 +592,7 @@ define void @foo() {
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto &BB = *F.begin();
+  auto &BB = *F->begin();
   auto It = BB.begin();
   auto *I0 = &*It++;
   auto *I1 = &*It++;
@@ -678,7 +635,7 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, UndefValue) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
   %i0 = add i32 undef, undef
   %i1 = add <2 x i32> undef, undef
@@ -686,11 +643,7 @@ define void @foo() {
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto &BB = *F.begin();
+  auto &BB = *F->begin();
   auto It = BB.begin();
   auto *I0 = &*It++;
   auto *I1 = &*It++;
@@ -736,22 +689,19 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, GlobalValue) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 declare external void @bar()
 define void @foo() {
   call void @bar()
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  auto *LLVMBB = &*LLVMF.begin();
+  auto *LLVMBB = &*LLVM->F->begin();
   auto LLVMIt = LLVMBB->begin();
   auto *LLVMCall = cast<llvm::CallInst>(&*LLVMIt++);
   auto *LLVMGV = cast<llvm::GlobalValue>(LLVMCall->getCalledOperand());
-  sandboxir::Context Ctx(C);
 
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto *BB = &*F.begin();
+  auto *BB = &*F->begin();
   auto It = BB->begin();
   auto *Call = cast<sandboxir::CallInst>(&*It++);
   [[maybe_unused]] auto *Ret = cast<sandboxir::ReturnInst>(&*It++);
@@ -802,22 +752,19 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, GlobalObject) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 declare external void @bar()
 define void @foo() {
   call void @bar()
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  auto *LLVMBB = &*LLVMF.begin();
+  auto *LLVMBB = &*LLVM->F.begin();
   auto LLVMIt = LLVMBB->begin();
   auto *LLVMCall = cast<llvm::CallInst>(&*LLVMIt++);
   auto *LLVMGO = cast<llvm::GlobalObject>(LLVMCall->getCalledOperand());
-  sandboxir::Context Ctx(C);
 
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto *BB = &*F.begin();
+  auto *BB = &*F->begin();
   auto It = BB->begin();
   auto *Call = cast<sandboxir::CallInst>(&*It++);
   // Check classof(), creation.
@@ -866,7 +813,7 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, GlobalIFunc) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 declare external void @bar()
 @ifunc0 = ifunc void(), ptr @foo
 @ifunc1 = ifunc void(), ptr @foo
@@ -877,16 +824,12 @@ define void @foo() {
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  auto *LLVMBB = &*LLVMF.begin();
+  auto *LLVMBB = &*LLVM->F.begin();
   auto LLVMIt = LLVMBB->begin();
   auto *LLVMCall0 = cast<llvm::CallInst>(&*LLVMIt++);
   auto *LLVMIFunc0 = cast<llvm::GlobalIFunc>(LLVMCall0->getCalledOperand());
 
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto *BB = &*F.begin();
+  auto *BB = &*F->begin();
   auto It = BB->begin();
   auto *Call0 = cast<sandboxir::CallInst>(&*It++);
   auto *Call1 = cast<sandboxir::CallInst>(&*It++);
@@ -944,7 +887,7 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, GlobalVariable) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 @glob0 = global i32 42
 @glob1 = global i32 43
 define void @foo() {
@@ -953,14 +896,11 @@ define void @foo() {
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  auto *LLVMBB = &*LLVMF.begin();
+  auto *LLVMBB = &*LLVM->F.begin();
   auto LLVMIt = LLVMBB->begin();
   auto *LLVMLd0 = cast<llvm::LoadInst>(&*LLVMIt++);
   auto *LLVMGV0 = cast<llvm::GlobalVariable>(LLVMLd0->getPointerOperand());
-  sandboxir::Context Ctx(C);
 
-  auto &F = *Ctx.createFunction(&LLVMF);
   auto *BB = &*F.begin();
   auto It = BB->begin();
   auto *Ld0 = cast<sandboxir::LoadInst>(&*It++);
@@ -1058,7 +998,7 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, GlobalAlias) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 @alias0 = dso_local alias void(), ptr @foo
 @alias1 = dso_local alias void(), ptr @foo
 declare void @bar();
@@ -1069,14 +1009,11 @@ define void @foo() {
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  auto *LLVMBB = &*LLVMF.begin();
+  auto *LLVMBB = &*LLVM->F.begin();
   auto LLVMIt = LLVMBB->begin();
   auto *LLVMCall0 = cast<llvm::CallInst>(&*LLVMIt++);
   auto *LLVMAlias0 = cast<llvm::GlobalAlias>(LLVMCall0->getCalledOperand());
-  sandboxir::Context Ctx(C);
 
-  auto &F = *Ctx.createFunction(&LLVMF);
   auto *BB = &*F.begin();
   auto It = BB->begin();
   auto *Call0 = cast<sandboxir::CallInst>(&*It++);
@@ -1124,16 +1061,12 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, NoCFIValue) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
   call void no_cfi @foo()
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
   auto *BB = &*F.begin();
   auto It = BB->begin();
   auto *Call = cast<sandboxir::CallInst>(&*It++);
@@ -1149,19 +1082,16 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, ConstantPtrAuth) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define ptr @foo() {
   ret ptr ptrauth (ptr @foo, i32 2, i64 1234)
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  auto *LLVMBB = &*LLVMF.begin();
+  auto *LLVMBB = &*LLVM->F.begin();
   auto *LLVMRet = cast<llvm::ReturnInst>(&*LLVMBB->begin());
   auto *LLVMPtrAuth = cast<llvm::ConstantPtrAuth>(LLVMRet->getReturnValue());
-  sandboxir::Context Ctx(C);
 
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto *BB = &*F.begin();
+  auto *BB = &*F->begin();
   auto It = BB->begin();
   auto *Ret = cast<sandboxir::ReturnInst>(&*It++);
   // Check classof(), creation.
@@ -1186,16 +1116,12 @@ define ptr @foo() {
 }
 
 TEST_F(SandboxIRTest, ConstantExpr) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define i32 @foo() {
   ret i32 ptrtoint (ptr @foo to i32)
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
-  auto *BB = &*F.begin();
+  auto *BB = &*F->begin();
   auto It = BB->begin();
   auto *Ret = cast<sandboxir::ReturnInst>(&*It++);
   // Check classof(), creation.
@@ -1204,7 +1130,7 @@ define i32 @foo() {
 }
 
 TEST_F(SandboxIRTest, BlockAddress) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr) {
 bb0:
   store ptr blockaddress(@foo, %bb0), ptr %ptr
@@ -1215,16 +1141,12 @@ bb2:
   ret void
 }
 )IR");
-  Function &LLVMF = *M->getFunction("foo");
-  sandboxir::Context Ctx(C);
-
-  auto &F = *Ctx.createFunction(&LLVMF);
   auto *BB0 = cast<sandboxir::BasicBlock>(
-      Ctx.getValue(getBasicBlockByName(LLVMF, "bb0")));
+      Ctx.getValue(getBasicBlockByName(LLVM->F, "bb0")));
   auto *BB1 = cast<sandboxir::BasicBlock>(
-      Ctx.getValue(getBasicBlockByName(LLVMF, "bb1")));
+      Ctx.getValue(getBasicBlockByName(LLVM->F, "bb1")));
   auto *BB2 = cast<sandboxir::BasicBlock>(
-      Ctx.getValue(getBasicBlockByName(LLVMF, "bb2")));
+      Ctx.getValue(getBasicBlockByName(LLVM->F, "bb2")));
   auto It = BB0->begin();
   auto *SI = cast<sandboxir::StoreInst>(&*It++);
   [[maybe_unused]] auto *Ret = cast<sandboxir::ReturnInst>(&*It++);
@@ -1252,7 +1174,7 @@ bb2:
 }
 
 TEST_F(SandboxIRTest, DSOLocalEquivalent) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 declare void @bar()
 define void @foo() {
   call void dso_local_equivalent @bar()
@@ -1276,7 +1198,7 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, ConstantTokenNone) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr) {
  bb0:
    %cs = catchswitch within none [label %handler] unwind to caller
@@ -1300,7 +1222,7 @@ define void @foo(ptr %ptr) {
 }
 
 TEST_F(SandboxIRTest, Use) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define i32 @foo(i32 %v0, i32 %v1) {
   %add0 = add i32 %v0, %v1
   ret i32 %add0
@@ -1412,7 +1334,7 @@ OperandNo: 0
 }
 
 TEST_F(SandboxIRTest, RUOW) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 declare void @bar0()
 declare void @bar1()
 
@@ -1471,7 +1393,7 @@ define i32 @foo(i32 %arg0, i32 %arg1) {
 }
 
 TEST_F(SandboxIRTest, RAUW_RUWIf) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr) {
   %ld0 = load float, ptr %ptr
   %ld1 = load float, ptr %ptr
@@ -1525,7 +1447,7 @@ define void @foo(ptr %ptr) {
 // \  /
 //  I2
 TEST_F(SandboxIRTest, DuplicateUses) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %v) {
   %I1 = add i8 %v, %v
   %I2 = add i8 %I1, %I1
@@ -1544,7 +1466,7 @@ define void @foo(i8 %v) {
 }
 
 TEST_F(SandboxIRTest, Function) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo0(i32 %arg0, i32 %arg1) {
 bb0:
   br label %bb1
@@ -1629,7 +1551,7 @@ bb1:
 }
 
 TEST_F(SandboxIRTest, Module) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 @glob0 = global i32 42
 @glob1 = global i32 43
 @internal0 = internal global i32 42
@@ -1687,7 +1609,7 @@ define void @bar() {
 }
 
 TEST_F(SandboxIRTest, BasicBlock) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %v1) {
 bb0:
   br label %bb1
@@ -1755,7 +1677,7 @@ bb0:
 }
 
 TEST_F(SandboxIRTest, Instruction) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %v1, ptr %ptr) {
 bb0:
   %add0 = add i8 %v1, %v1
@@ -1936,7 +1858,7 @@ bb1:
 }
 
 TEST_F(SandboxIRTest, VAArgInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %va) {
   %va_arg = va_arg ptr %va, i32
   ret void
@@ -1969,7 +1891,7 @@ define void @foo(ptr %va) {
 }
 
 TEST_F(SandboxIRTest, FreezeInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %arg) {
   freeze i8 %arg
   ret void
@@ -1998,7 +1920,7 @@ define void @foo(i8 %arg) {
 }
 
 TEST_F(SandboxIRTest, FenceInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
   fence syncscope("singlethread") seq_cst
   ret void
@@ -2044,7 +1966,7 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, SelectInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i1 %c0, i8 %v0, i8 %v1, i1 %c1) {
   %sel = select i1 %c0, i8 %v0, i8 %v1
   ret void
@@ -2122,7 +2044,7 @@ define void @foo(i1 %c0, i8 %v0, i8 %v1, i1 %c1) {
 }
 
 TEST_F(SandboxIRTest, ExtractElementInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(<2 x i8> %vec, i32 %idx) {
   %ins0 = extractelement <2 x i8> %vec, i32 %idx
   ret void
@@ -2166,7 +2088,7 @@ define void @foo(<2 x i8> %vec, i32 %idx) {
 }
 
 TEST_F(SandboxIRTest, InsertElementInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %v0, i8 %v1, <2 x i8> %vec) {
   %ins0 = insertelement <2 x i8> poison, i8 %v0, i32 0
   %ins1 = insertelement <2 x i8> %ins0, i8 %v1, i32 1
@@ -2215,7 +2137,7 @@ define void @foo(i8 %v0, i8 %v1, <2 x i8> %vec) {
 }
 
 TEST_F(SandboxIRTest, ShuffleVectorInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(<2 x i8> %v1, <2 x i8> %v2) {
   %shuf = shufflevector <2 x i8> %v1, <2 x i8> %v2, <2 x i32> <i32 0, i32 2>
   %extr = extractelement <2 x i8> <i8 0, i8 1>, i32 0
@@ -2629,7 +2551,7 @@ define void @foo(<2 x i8> %v1, <2 x i8> %v2) {
 }
 
 TEST_F(SandboxIRTest, ExtractValueInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo({i32, float} %agg) {
   %ext_simple = extractvalue {i32, float} %agg, 0
   %ext_nested = extractvalue {float, {i32}} undef, 1, 0
@@ -2736,7 +2658,7 @@ define void @foo({i32, float} %agg) {
 }
 
 TEST_F(SandboxIRTest, InsertValueInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo({i32, float} %agg, i32 %i) {
   %ins_simple = insertvalue {i32, float} %agg, i32 %i, 0
   %ins_nested = insertvalue {float, {i32}} undef, i32 %i, 1, 0
@@ -2839,7 +2761,7 @@ define void @foo({i32, float} %agg, i32 %i) {
 }
 
 TEST_F(SandboxIRTest, BranchInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i1 %cond0, i1 %cond2) {
  bb0:
    br i1 %cond0, label %bb1, label %bb2
@@ -2944,7 +2866,7 @@ define void @foo(i1 %cond0, i1 %cond2) {
 }
 
 TEST_F(SandboxIRTest, LoadInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %arg0, ptr %arg1) {
   %ld = load i8, ptr %arg0, align 64
   %vld = load volatile i8, ptr %arg0, align 64
@@ -3023,7 +2945,7 @@ define void @foo(ptr %arg0, ptr %arg1) {
 }
 
 TEST_F(SandboxIRTest, StoreInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %val, ptr %ptr) {
   store i8 %val, ptr %ptr, align 64
   store volatile i8 %val, ptr %ptr, align 64
@@ -3105,7 +3027,7 @@ define void @foo(i8 %val, ptr %ptr) {
 }
 
 TEST_F(SandboxIRTest, ReturnInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define i8 @foo(i8 %val) {
   %add = add i8 %val, 42
   ret i8 %val
@@ -3144,7 +3066,7 @@ define i8 @foo(i8 %val) {
 }
 
 TEST_F(SandboxIRTest, CallBase) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 declare void @bar1(i8)
 declare void @bar2()
 declare void @bar3()
@@ -3295,7 +3217,7 @@ define i8 @foo(i8 %arg0, i32 %arg1, ptr %indirectFoo) {
 }
 
 TEST_F(SandboxIRTest, CallInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define i8 @foo(i8 %arg) {
   %call = call i8 @foo(i8 %arg)
   ret i8 %call
@@ -3345,7 +3267,7 @@ define i8 @foo(i8 %arg) {
 }
 
 TEST_F(SandboxIRTest, InvokeInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %arg) {
  bb0:
    invoke i8 @foo(i8 %arg) to label %normal_bb
@@ -3435,7 +3357,7 @@ define void @foo(i8 %arg) {
 }
 
 TEST_F(SandboxIRTest, CallBrInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %arg) {
  bb0:
    callbr void asm "", ""()
@@ -3548,7 +3470,7 @@ define void @foo(i8 %arg) {
 }
 
 TEST_F(SandboxIRTest, LandingPadInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
 entry:
   invoke void @foo()
@@ -3608,7 +3530,7 @@ bb:
 }
 
 TEST_F(SandboxIRTest, FuncletPadInst_CatchPadInst_CleanupPadInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
 dispatch:
   %cs = catchswitch within none [label %handler0] unwind to caller
@@ -3698,7 +3620,7 @@ bb:
 }
 
 TEST_F(SandboxIRTest, CatchReturnInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
 dispatch:
   %cs = catchswitch within none [label %catch] unwind to caller
@@ -3762,7 +3684,7 @@ catch2:
 }
 
 TEST_F(SandboxIRTest, CleanupReturnInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
 dispatch:
   invoke void @foo()
@@ -3833,7 +3755,7 @@ cleanup2:
 }
 
 TEST_F(SandboxIRTest, GetElementPtrInstruction) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr, <2 x ptr> %ptrs) {
   %gep0 = getelementptr i8, ptr %ptr, i32 0
   %gep1 = getelementptr nusw i8, ptr %ptr, i32 0
@@ -3966,7 +3888,7 @@ define void @foo(ptr %ptr, <2 x ptr> %ptrs) {
 }
 
 TEST_F(SandboxIRTest, Flags) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg, float %farg) {
   %add = add i32 %arg, %arg
   %fadd = fadd float %farg, %farg
@@ -4025,7 +3947,7 @@ define void @foo(i32 %arg, float %farg) {
 }
 
 TEST_F(SandboxIRTest, CatchSwitchInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %cond0, i32 %cond1) {
   bb0:
     %cs0 = catchswitch within none [label %handler0, label %handler1] unwind to caller
@@ -4129,7 +4051,7 @@ define void @foo(i32 %cond0, i32 %cond1) {
 }
 
 TEST_F(SandboxIRTest, ResumeInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
 entry:
   invoke void @foo()
@@ -4167,7 +4089,7 @@ unwind:
 }
 
 TEST_F(SandboxIRTest, SwitchInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %cond0, i32 %cond1) {
   entry:
     switch i32 %cond0, label %default [ i32 0, label %bb0
@@ -4295,7 +4217,7 @@ define void @foo(i32 %cond0, i32 %cond1) {
 }
 
 TEST_F(SandboxIRTest, UnaryOperator) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(float %arg0) {
   %fneg = fneg float %arg0
   %copyfrom = fadd reassoc float %arg0, 42.0
@@ -4417,7 +4339,7 @@ define void @foo(float %arg0) {
 }
 
 TEST_F(SandboxIRTest, BinaryOperator) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %arg0, i8 %arg1, float %farg0, float %farg1) {
   %add = add i8 %arg0, %arg1
   %fadd = fadd float %farg0, %farg1
@@ -4601,7 +4523,7 @@ define void @foo(i8 %arg0, i8 %arg1, float %farg0, float %farg1) {
 }
 
 TEST_F(SandboxIRTest, PossiblyDisjointInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i8 %arg0, i8 %arg1) {
   %or = or i8 %arg0, %arg1
   ret void
@@ -4626,7 +4548,7 @@ define void @foo(i8 %arg0, i8 %arg1) {
 }
 
 TEST_F(SandboxIRTest, AtomicRMWInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr, i8 %arg) {
   %atomicrmw = atomicrmw add ptr %ptr, i8 %arg acquire, align 128
   ret void
@@ -4788,7 +4710,7 @@ define void @foo(ptr %ptr, i8 %arg) {
 }
 
 TEST_F(SandboxIRTest, AtomicCmpXchgInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr, i8 %cmp, i8 %new) {
   %cmpxchg = cmpxchg ptr %ptr, i8 %cmp, i8 %new monotonic monotonic, align 128
   ret void
@@ -4979,7 +4901,7 @@ define void @foo(ptr %ptr, i8 %cmp, i8 %new) {
 }
 
 TEST_F(SandboxIRTest, AllocaInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
   %allocaScalar = alloca i32, align 1024
   %allocaArray = alloca i32, i32 42
@@ -5119,7 +5041,7 @@ define void @foo() {
 }
 
 TEST_F(SandboxIRTest, CastInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg, float %farg, double %darg, ptr %ptr) {
   %zext = zext i32 %arg to i64
   %sext = sext i32 %arg to i64
@@ -5318,7 +5240,7 @@ define void @foo(i32 %arg, float %farg, double %darg, ptr %ptr) {
 }
 
 TEST_F(SandboxIRTest, PossiblyNonNegInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg, float %farg, double %darg, ptr %ptr) {
   %zext = zext i32 %arg to i64
   %uitofp = uitofp i32 %arg to float
@@ -5427,7 +5349,7 @@ void testCastInst(llvm::Module &M, llvm::Type *LLVMSrcTy,
 }
 
 TEST_F(SandboxIRTest, TruncInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i64 %arg) {
   %trunc = trunc i64 %arg to i32
   ret void
@@ -5439,7 +5361,7 @@ define void @foo(i64 %arg) {
 }
 
 TEST_F(SandboxIRTest, ZExtInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg) {
   %zext = zext i32 %arg to i64
   ret void
@@ -5451,7 +5373,7 @@ define void @foo(i32 %arg) {
 }
 
 TEST_F(SandboxIRTest, SExtInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg) {
   %sext = sext i32 %arg to i64
   ret void
@@ -5463,7 +5385,7 @@ define void @foo(i32 %arg) {
 }
 
 TEST_F(SandboxIRTest, FPTruncInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(double %arg) {
   %fptrunc = fptrunc double %arg to float
   ret void
@@ -5475,7 +5397,7 @@ define void @foo(double %arg) {
 }
 
 TEST_F(SandboxIRTest, FPExtInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(float %arg) {
   %fpext = fpext float %arg to double
   ret void
@@ -5487,7 +5409,7 @@ define void @foo(float %arg) {
 }
 
 TEST_F(SandboxIRTest, UIToFPInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg) {
   %uitofp = uitofp i32 %arg to float
   ret void
@@ -5499,7 +5421,7 @@ define void @foo(i32 %arg) {
 }
 
 TEST_F(SandboxIRTest, SIToFPInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg) {
   %sitofp = sitofp i32 %arg to float
   ret void
@@ -5512,7 +5434,7 @@ define void @foo(i32 %arg) {
 }
 
 TEST_F(SandboxIRTest, FPToUIInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(float %arg) {
   %fptoui = fptoui float %arg to i32
   ret void
@@ -5524,7 +5446,7 @@ define void @foo(float %arg) {
 }
 
 TEST_F(SandboxIRTest, FPToSIInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(float %arg) {
   %fptosi = fptosi float %arg to i32
   ret void
@@ -5535,7 +5457,7 @@ define void @foo(float %arg) {
 }
 
 TEST_F(SandboxIRTest, IntToPtrInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg) {
   %inttoptr = inttoptr i32 %arg to ptr
   ret void
@@ -5548,7 +5470,7 @@ define void @foo(i32 %arg) {
 }
 
 TEST_F(SandboxIRTest, PtrToIntInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr) {
   %ptrtoint = ptrtoint ptr %ptr to i32
   ret void
@@ -5560,7 +5482,7 @@ define void @foo(ptr %ptr) {
 }
 
 TEST_F(SandboxIRTest, BitCastInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg) {
   %bitcast = bitcast i32 %arg to float
   ret void
@@ -5572,7 +5494,7 @@ define void @foo(i32 %arg) {
 }
 
 TEST_F(SandboxIRTest, AddrSpaceCastInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(ptr %ptr) {
   %addrspacecast = addrspacecast ptr %ptr to ptr addrspace(1)
   ret void
@@ -5604,7 +5526,7 @@ define void @foo(ptr %ptr) {
 }
 
 TEST_F(SandboxIRTest, PHINode) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %arg) {
 bb1:
   br label %bb2
@@ -5809,7 +5731,7 @@ static void checkCommonPredicates(sandboxir::CmpInst *Cmp,
 
 TEST_F(SandboxIRTest, ICmpInst) {
   SCOPED_TRACE("SandboxIRTest sandboxir::ICmpInst tests");
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(i32 %i0, i32 %i1) {
  bb:
   %ine  = icmp ne i32 %i0, %i1
@@ -5860,7 +5782,7 @@ define void @foo(i32 %i0, i32 %i1) {
 
 TEST_F(SandboxIRTest, FCmpInst) {
   SCOPED_TRACE("SandboxIRTest sandboxir::FCmpInst tests");
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo(float %f0, float %f1) {
 bb:
   %ffalse = fcmp false float %f0, %f1
@@ -5931,7 +5853,7 @@ bb1:
 }
 
 TEST_F(SandboxIRTest, UnreachableInst) {
-  parseIR(C, R"IR(
+  setUp("foo", R"IR(
 define void @foo() {
   unreachable
 }
