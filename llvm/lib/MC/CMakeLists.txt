@@ -49,6 +49,7 @@ add_llvm_component_library(LLVMMC
   MCSectionMachO.cpp
   MCSectionWasm.cpp
   MCSectionXCOFF.cpp
+  MCSFrame.cpp
   MCStreamer.cpp
   MCSPIRVStreamer.cpp
   MCSubtargetInfo.cpp

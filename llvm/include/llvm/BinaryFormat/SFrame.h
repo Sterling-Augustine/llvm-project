@@ -44,12 +44,12 @@ static_assert(sizeof(sframe_preamble) == 4);
 
 static constexpr uint16_t SFRAME_MAGIC = 0xDEE2;
 
-enum : unsigned {
+enum : uint8_t {
   SFRAME_VERSION_1 = 1,
   SFRAME_VERSION_2 = 2,
 };
 
-enum : unsigned {
+enum : uint8_t {
   SFRAME_F_FDE_SORTED = 1,
   SFRAME_F_FRAME_POINTER = 2,
 };
@@ -70,7 +70,7 @@ struct __attribute__((packed)) sframe_header {
 static_assert(std::is_trivial<Header> == true);
 static_assert(sizeof(Header) == 40);
 
-enum : unsigned {
+enum : uint8_t {
   SFRAME_ABI_AARCH64_ENDIAN_BIG = 1,
   SFRAME_ABI_AARCH64_ENDIAN_LITTLE = 2,
   SFRAME_ABI_AMD64_ENDIAN_LITTLE = 3
@@ -89,25 +89,25 @@ struct __attribute__((packed)) func_desc_entry {
 static_assert(std::is_trivial<func_desc_entry> == true);
 static_assert(sizeof(func_desc_entry) == 20);
 
-enum sframe_fre_type_mask : unsigned char {
+enum sframe_fre_type_mask : uint8_t {
   fretype_mask = 0b00001111,
   fdetype_mask = 0b00010000,
   pauth_key_mask = 0b00100000,
   unused_mask = 0b11000000,
 };
 
-enum : unsigned char {
+enum : uint8_t {
   SFRAME_FDE_TYPE_PCINC = 0,
   SFRAME_FDE_TYPE_PCMASK = 1,
 };
 
-enum : unsigned char {
+enum : uint8_t {
   SFRAME_FRE_TYPE_ADDR1 = 0,
   SFRAME_FRE_TYPE_ADDR2 = 1,
   SFRAME_FRE_TYPE_ADDR4 = 2,
 };
 
-using sframe_fre_info = unsigned char;
+using sframe_fre_info = uint8_t;
 
 struct __attribute__((packed)) sframe_frame_row_entry_addr1 {
   uint8_t sfre_start_address;
@@ -133,7 +133,7 @@ struct __attribute__((packed)) sframe_frame_row_entry_addr4 {
 static_assert(std::is_trival<sframe_frame_row_entry_addr4> == true);
 static assert(sizeof(sframe_frame_row_entry_addr1) == 5);
 
-enum sframe_fre_info_mask : unsigned char {
+enum sframe_fre_info_mask uint8_t {
   fre_mangled_ra_p_mask = 0b00000001,
   fre_offset_count_mask = 0b00011110,
   fre_offset_size_mask = 0b01100000,

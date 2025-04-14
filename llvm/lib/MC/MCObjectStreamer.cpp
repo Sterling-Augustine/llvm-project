@@ -18,7 +18,9 @@
 #include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSection.h"
+#include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/MC/MCSFrame.h"
 #include "llvm/MC/MCValue.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SourceMgr.h"
@@ -142,6 +144,10 @@ void MCObjectStreamer::emitFrames(MCAsmBackend *MAB) {
 
   if (EmitDebugFrame)
     MCDwarfFrameEmitter::Emit(*this, MAB, false);
+
+  // FIXME
+  if (true)
+    MCSFrameEmitter::Emit(*this, MAB);
 }
 
 static bool canReuseDataFragment(const MCDataFragment &F,
