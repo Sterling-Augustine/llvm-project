@@ -1,4 +1,4 @@
-//===- lib/MC/MCDwarf.cpp - MCDwarf implementation ------------------------===//
+//===- lib/MC/MCSFrame.cpp - MCSFrame implementation ----------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -51,25 +51,25 @@ class SFrameEmitterImpl {
   MCObjectStreamer &Streamer;
 
 public:
-  FrameEmitterImpl(MCObjectStreamer &Streamer)
+  SFrameEmitterImpl(MCObjectStreamer &Streamer)
       : Streamer(Streamer) {}
 
-  EmitPreamble() {
+  void EmitPreamble() {
     Streamer.emitInt16(SFRAME_MAGIC);
     Streamer.emitInt8(SFRAME_VERSION_2);
     // They aren't sorted at this point in the code, but they
     // will be when they are actually emitted.
     uint8_t flags = SFRAME_F_FDE_SORTED;
-    if (Streamer.getContext().getTargetOptions()->
+    //    if (Streamer.getContext().getTargetOptions()->
     // if (-fno-omit-frame-pointer)
     //   flags |= FRAME_F_FRAME_POINTER
     Streamer.emitInt8(flags);
   }
 
-  EmitHeader() {
+  void EmitHeader() {
     EmitPreamble();
     MCContext &Context = Streamer.getContext();
-    uint8_t ABIArch =
+    //uint8_t ABIArch =
   }
   const MCSymbol &EmitCIE(const MCDwarfFrameInfo &F);
   void EmitFDE(const MCSymbol &cieStart, const MCDwarfFrameInfo &frame,
@@ -84,18 +84,17 @@ public:
 
 void MCSFrameEmitter::Emit(MCObjectStreamer &Streamer, MCAsmBackend *MAB) {
   MCContext &Context = Streamer.getContext();
-  const MCObjectFileInfo *MOFI = Context.getObjectFileInfo();
+  const  MCObjectFileInfo *MOFI = Context.getObjectFileInfo();
   const MCAsmInfo *AsmInfo = Context.getAsmInfo();
-  FrameEmitterImpl Emitter(IsEH, Streamer);
+  SFrameEmitterImpl Emitter(Streamer);
   ArrayRef<MCDwarfFrameInfo> FrameArray = Streamer.getDwarfFrameInfos();
 
-  MCSection &Section =
-      const_cast<MCObjectFileInfo *>(MOFI)->getSFrameSection();
+  MCSection *Section = MOFI->getSFrameSection();
 
-  Streamer.switchSection(&Section);
+  Streamer.switchSection(Section);
   MCSymbol *SectionStart = Context.createTempSymbol();
   Streamer.emitLabel(SectionStart);
-  EmitPreamble(Streamer);
+  Emitter.EmitPreamble();
 
   const MCSymbol *LastCIEStart = nullptr;
   for (auto I = FrameArray.begin(), E = FrameArray.end(); I != E;) {

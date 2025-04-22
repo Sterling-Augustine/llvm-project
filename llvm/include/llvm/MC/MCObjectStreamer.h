@@ -41,6 +41,7 @@ class MCObjectStreamer : public MCStreamer {
   std::unique_ptr<MCAssembler> Assembler;
   bool EmitEHFrame;
   bool EmitDebugFrame;
+  bool EmitSFrame;
   struct PendingMCFixup {
     const MCSymbol *Sym;
     MCFixup Fixup;
@@ -81,7 +82,7 @@ public:
 
   void emitFrames(MCAsmBackend *MAB);
   MCSymbol *emitCFILabel() override;
-  void emitCFISections(bool EH, bool Debug) override;
+  void emitCFISections(bool EH, bool Debug, bool SFrame) override;
 
   void insert(MCFragment *F) {
     auto *Sec = CurFrag->getParent();

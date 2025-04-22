@@ -33,7 +33,7 @@ MCObjectStreamer::MCObjectStreamer(MCContext &Context,
     : MCStreamer(Context),
       Assembler(std::make_unique<MCAssembler>(
           Context, std::move(TAB), std::move(Emitter), std::move(OW))),
-      EmitEHFrame(true), EmitDebugFrame(false) {
+      EmitEHFrame(true), EmitDebugFrame(false), EmitSFrame(false) {
   assert(Assembler->getBackendPtr() && Assembler->getEmitterPtr());
   setAllowAutoPadding(Assembler->getBackend().allowAutoPadding());
   if (Context.getTargetOptions() && Context.getTargetOptions()->MCRelaxAll)
@@ -145,8 +145,7 @@ void MCObjectStreamer::emitFrames(MCAsmBackend *MAB) {
   if (EmitDebugFrame)
     MCDwarfFrameEmitter::Emit(*this, MAB, false);
 
-  // FIXME
-  if (true)
+  if (EmitSFrame)
     MCSFrameEmitter::Emit(*this, MAB);
 }
 
@@ -183,10 +182,11 @@ void MCObjectStreamer::visitUsedSymbol(const MCSymbol &Sym) {
   Assembler->registerSymbol(Sym);
 }
 
-void MCObjectStreamer::emitCFISections(bool EH, bool Debug) {
-  MCStreamer::emitCFISections(EH, Debug);
+void MCObjectStreamer::emitCFISections(bool EH, bool Debug, bool SFrame) {
+  MCStreamer::emitCFISections(EH, Debug, SFrame);
   EmitEHFrame = EH;
   EmitDebugFrame = Debug;
+  EmitSFrame = SFrame;
 }
 
 void MCObjectStreamer::emitValueImpl(const MCExpr *Value, unsigned Size,

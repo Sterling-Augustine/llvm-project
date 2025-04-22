@@ -173,6 +173,9 @@ protected:
   /// It is initialized on demand so it can be overwritten (with uniquing).
   MCSection *EHFrameSection = nullptr;
 
+  /// SFrame section.
+  MCSection *SFrameSection = nullptr;
+
   /// Section containing metadata on function stack sizes.
   MCSection *StackSizesSection = nullptr;
 
@@ -448,6 +451,7 @@ public:
   MCSection *getTOCBaseSection() const { return TOCBaseSection; }
 
   MCSection *getEHFrameSection() const { return EHFrameSection; }
+  MCSection *getSFrameSection() const { return SFrameSection; }
 
   bool isPositionIndependent() const { return PositionIndependent; }
 

@@ -111,7 +111,8 @@ void DwarfCFIException::beginBasicBlockSection(const MachineBasicBlock &MBB) {
     if (CFISecType == AsmPrinter::CFISection::Debug ||
         Asm->TM.Options.ForceDwarfFrameSection)
       Asm->OutStreamer->emitCFISections(
-          CFISecType == AsmPrinter::CFISection::EH, true);
+          CFISecType == AsmPrinter::CFISection::EH, true,
+          /*FIXME get sframe option here properly*/ false);
     hasEmittedCFISections = true;
   }
 

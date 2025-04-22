@@ -32,6 +32,8 @@
 
 namespace llvm {
 
+class MCObjectStreamer;
+class MCAsmBackend;
 
 class MCSFrameEmitter {
 public:

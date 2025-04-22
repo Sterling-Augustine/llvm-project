@@ -536,6 +536,10 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(const Triple &T, bool Large) {
   EHFrameSection =
       Ctx->getELFSection(".eh_frame", EHSectionType, EHSectionFlags);
 
+  // TODO: Doublecheck section type.
+  SFrameSection =
+      Ctx->getELFSection(".sframe", ELF::SHT_PROGBITS, ELF::SHF_ALLOC);
+
   StackSizesSection = Ctx->getELFSection(".stack_sizes", ELF::SHT_PROGBITS, 0);
 
   PseudoProbeSection = Ctx->getELFSection(".pseudo_probe", DebugSecType, 0);

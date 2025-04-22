@@ -39,7 +39,9 @@ void ARMException::beginFunction(const MachineFunction *MF) {
   if (CFISecType == AsmPrinter::CFISection::Debug) {
     if (!hasEmittedCFISections) {
       if (Asm->getModuleCFISectionType() == AsmPrinter::CFISection::Debug)
-        Asm->OutStreamer->emitCFISections(false, true);
+        Asm->OutStreamer->emitCFISections(
+            false, true,
+            /*FIXME get sframe option here properly*/ false);
       hasEmittedCFISections = true;
     }
 

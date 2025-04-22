@@ -946,6 +946,12 @@ bool MCContext::emitCompactUnwindNonCanonical() const {
   return false;
 }
 
+bool MCContext::emitSFrames() const {
+  if (TargetOptions)
+    return TargetOptions->EmitSFrames;
+  return false;
+}
+
 void MCContext::setGenDwarfRootFile(StringRef InputFileName, StringRef Buffer) {
   // MCDwarf needs the root file as well as the compilation directory.
   // If we find a '.file 0' directive that will supersede these values.
