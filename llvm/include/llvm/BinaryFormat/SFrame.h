@@ -78,7 +78,7 @@ enum : uint8_t {
   SFRAME_ABI_AMD64_ENDIAN_LITTLE = 3
 };
 
-struct __attribute__((packed)) func_desc_entry {
+struct __attribute__((packed)) sframe_func_desc_entry {
   int32_t sfde_func_start_address;
   uint32_t sfde_func_size;
   uint32_t sfde_func_start_fre_off;
@@ -88,28 +88,45 @@ struct __attribute__((packed)) func_desc_entry {
   uint16_t sfde_func_padding2;
 };
 
-static_assert(std::is_trivial_v<func_desc_entry>);
-static_assert(sizeof(func_desc_entry) == 20);
+static_assert(std::is_trivial_v<sframe_func_desc_entry>);
+static_assert(sizeof(sframe_func_desc_entry) == 20);
 
 enum sframe_fre_type_mask : uint8_t {
-  fretype_mask = 0b00001111,
-  fdetype_mask = 0b00010000,
+  fretype_mask =   0b00001111,
+  fdetype_mask =   0b00010000,
   pauth_key_mask = 0b00100000,
-  unused_mask = 0b11000000,
+  unused_mask =    0b11000000,
 };
 
-enum : uint8_t {
-  SFRAME_FDE_TYPE_PCINC = 0,
-  SFRAME_FDE_TYPE_PCMASK = 1,
+enum sfde_func_info : uint8_t {
+  SFRAME_FRE_TYPE_ADDR1 =      0b00000000,
+  SFRAME_FRE_TYPE_ADDR2 =      0b00000001,
+  SFRAME_FRE_TYPE_ADDR4 =      0b00000010,
+  SFRAME_FDE_TYPE_PCMASK =     0b00010000,
+  SFRAME_FDE_TYPE_PCINC =      0b00000000,
+  SFRAME_AARCH64_PAUTH_KEY_A = 0b00000000,
+  SFRAME_AARCH64_PAUTH_KEY_B = 0b00100000,
 };
 
-enum : uint8_t {
-  SFRAME_FRE_TYPE_ADDR1 = 0,
-  SFRAME_FRE_TYPE_ADDR2 = 1,
-  SFRAME_FRE_TYPE_ADDR4 = 2,
+// Ensure fields are shifted and masked properly.
+static_assert((SFRAME_FRE_TYPE_ADDR1 & ~fretype_mask) == 0);
+static_assert((SFRAME_FRE_TYPE_ADDR2 & ~fretype_mask) == 0);
+static_assert((SFRAME_FRE_TYPE_ADDR4 & ~fretype_mask) == 0);
+static_assert((SFRAME_FDE_TYPE_PCINC & ~fdetype_mask) == 0);
+static_assert((SFRAME_FDE_TYPE_PCMASK & ~fdetype_mask) == 0);
+static_assert((SFRAME_AARCH64_PAUTH_KEY_A & ~pauth_key_mask) == 0);
+static_assert((SFRAME_AARCH64_PAUTH_KEY_B & ~pauth_key_mask) == 0);
+
+// Multiple count fields make this hard to do as a pure enum, but
+// define the fields that can be defined.
+enum sframe_fre_info : uint8_t {
+  SFRAME_FRE_OFFSET_1B = (0 << 5),
+  SFRAME_FRE_OFFSET_2B = (1 << 5),
+  SFRAME_FRE_OFFSET_4B = (2 << 5),
 };
 
-using sframe_fre_info = uint8_t;
+static constexpr uint8_t SFRAME_BASE_REG_FP = 0;
+static constexpr uint8_t SFRAME_BASE_REG_SP = 1;
 
 struct __attribute__((packed)) sframe_frame_row_entry_addr1 {
   uint8_t sfre_start_address;

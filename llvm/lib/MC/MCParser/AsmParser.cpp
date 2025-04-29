@@ -4136,7 +4136,7 @@ bool AsmParser::parseDirectiveCFISections() {
   if (!parseOptionalToken(AsmToken::EndOfStatement)) {
     for (;;) {
       if (parseIdentifier(Name))
-        return TokError("expected .eh_frame or .debug_frame");
+        return TokError("expected .eh_frame, .debug_frame, or .sframe");
       if (Name == ".eh_frame")
         EH = true;
       else if (Name == ".debug_frame")

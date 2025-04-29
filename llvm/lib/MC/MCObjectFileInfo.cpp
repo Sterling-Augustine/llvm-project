@@ -10,6 +10,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
+#include "llvm/BinaryFormat/SFrame.h"
 #include "llvm/BinaryFormat/Wasm.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -379,6 +380,20 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(const Triple &T, bool Large) {
   unsigned EHSectionType = T.getArch() == Triple::x86_64
                                ? ELF::SHT_X86_64_UNWIND
                                : ELF::SHT_PROGBITS;
+  switch (T.getArch()) {
+    case Triple::x86_64:
+      SFrameABIArch = sframe::SFRAME_ABI_AMD64_ENDIAN_LITTLE;
+      break;
+    case Triple::aarch64:
+      SFrameABIArch = sframe::SFRAME_ABI_AARCH64_ENDIAN_LITTLE;
+      break;
+    case Triple::aarch64_be:
+      SFrameABIArch = sframe::SFRAME_ABI_AARCH64_ENDIAN_BIG;
+      break;
+    default:
+      SFrameABIArch = 0;
+      break;
+  }
 
   // Solaris requires different flags for .eh_frame to seemingly every other
   // platform.
@@ -409,28 +424,24 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(const Triple &T, bool Large) {
   DataRelROSection = Ctx->getELFSection(".data.rel.ro", ELF::SHT_PROGBITS,
                                         ELF::SHF_ALLOC | ELF::SHF_WRITE);
 
-  MergeableConst4Section =
-      Ctx->getELFSection(".rodata.cst4", ELF::SHT_PROGBITS,
-                         ELF::SHF_ALLOC | ELF::SHF_MERGE, 4);
+  MergeableConst4Section = Ctx->getELFSection(
+      ".rodata.cst4", ELF::SHT_PROGBITS, ELF::SHF_ALLOC | ELF::SHF_MERGE, 4);
 
-  MergeableConst8Section =
-      Ctx->getELFSection(".rodata.cst8", ELF::SHT_PROGBITS,
-                         ELF::SHF_ALLOC | ELF::SHF_MERGE, 8);
+  MergeableConst8Section = Ctx->getELFSection(
+      ".rodata.cst8", ELF::SHT_PROGBITS, ELF::SHF_ALLOC | ELF::SHF_MERGE, 8);
 
-  MergeableConst16Section =
-      Ctx->getELFSection(".rodata.cst16", ELF::SHT_PROGBITS,
-                         ELF::SHF_ALLOC | ELF::SHF_MERGE, 16);
+  MergeableConst16Section = Ctx->getELFSection(
+      ".rodata.cst16", ELF::SHT_PROGBITS, ELF::SHF_ALLOC | ELF::SHF_MERGE, 16);
 
-  MergeableConst32Section =
-      Ctx->getELFSection(".rodata.cst32", ELF::SHT_PROGBITS,
-                         ELF::SHF_ALLOC | ELF::SHF_MERGE, 32);
+  MergeableConst32Section = Ctx->getELFSection(
+      ".rodata.cst32", ELF::SHT_PROGBITS, ELF::SHF_ALLOC | ELF::SHF_MERGE, 32);
 
   // Exception Handling Sections.
 
-  // FIXME: We're emitting LSDA info into a readonly section on ELF, even though
-  // it contains relocatable pointers.  In PIC mode, this is probably a big
-  // runtime hit for C++ apps.  Either the contents of the LSDA need to be
-  // adjusted or this should be a data section.
+  // FIXME: We're emitting LSDA info into a readonly section on ELF, even
+  // though it contains relocatable pointers.  In PIC mode, this is probably
+  // a big runtime hit for C++ apps.  Either the contents of the LSDA need
+  // to be adjusted or this should be a data section.
   LSDASection = Ctx->getELFSection(".gcc_except_table", ELF::SHT_PROGBITS,
                                    ELF::SHF_ALLOC);
 
@@ -441,37 +452,30 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(const Triple &T, bool Large) {
 
   // MIPS .debug_* sections should have SHT_MIPS_DWARF section type
   // to distinguish among sections contain DWARF and ECOFF debug formats.
-  // Sections with ECOFF debug format are obsoleted and marked by SHT_PROGBITS.
+  // Sections with ECOFF debug format are obsoleted and marked by
+  // SHT_PROGBITS.
   if (T.isMIPS())
     DebugSecType = ELF::SHT_MIPS_DWARF;
 
   // Debug Info Sections.
-  DwarfAbbrevSection =
-      Ctx->getELFSection(".debug_abbrev", DebugSecType, 0);
+  DwarfAbbrevSection = Ctx->getELFSection(".debug_abbrev", DebugSecType, 0);
   DwarfInfoSection = Ctx->getELFSection(".debug_info", DebugSecType, 0);
   DwarfLineSection = Ctx->getELFSection(".debug_line", DebugSecType, 0);
-  DwarfLineStrSection =
-      Ctx->getELFSection(".debug_line_str", DebugSecType,
-                         ELF::SHF_MERGE | ELF::SHF_STRINGS, 1);
+  DwarfLineStrSection = Ctx->getELFSection(
+      ".debug_line_str", DebugSecType, ELF::SHF_MERGE | ELF::SHF_STRINGS, 1);
   DwarfFrameSection = Ctx->getELFSection(".debug_frame", DebugSecType, 0);
-  DwarfPubNamesSection =
-      Ctx->getELFSection(".debug_pubnames", DebugSecType, 0);
-  DwarfPubTypesSection =
-      Ctx->getELFSection(".debug_pubtypes", DebugSecType, 0);
+  DwarfPubNamesSection = Ctx->getELFSection(".debug_pubnames", DebugSecType, 0);
+  DwarfPubTypesSection = Ctx->getELFSection(".debug_pubtypes", DebugSecType, 0);
   DwarfGnuPubNamesSection =
       Ctx->getELFSection(".debug_gnu_pubnames", DebugSecType, 0);
   DwarfGnuPubTypesSection =
       Ctx->getELFSection(".debug_gnu_pubtypes", DebugSecType, 0);
-  DwarfStrSection =
-      Ctx->getELFSection(".debug_str", DebugSecType,
-                         ELF::SHF_MERGE | ELF::SHF_STRINGS, 1);
+  DwarfStrSection = Ctx->getELFSection(".debug_str", DebugSecType,
+                                       ELF::SHF_MERGE | ELF::SHF_STRINGS, 1);
   DwarfLocSection = Ctx->getELFSection(".debug_loc", DebugSecType, 0);
-  DwarfARangesSection =
-      Ctx->getELFSection(".debug_aranges", DebugSecType, 0);
-  DwarfRangesSection =
-      Ctx->getELFSection(".debug_ranges", DebugSecType, 0);
-  DwarfMacinfoSection =
-      Ctx->getELFSection(".debug_macinfo", DebugSecType, 0);
+  DwarfARangesSection = Ctx->getELFSection(".debug_aranges", DebugSecType, 0);
+  DwarfRangesSection = Ctx->getELFSection(".debug_ranges", DebugSecType, 0);
+  DwarfMacinfoSection = Ctx->getELFSection(".debug_macinfo", DebugSecType, 0);
   DwarfMacroSection = Ctx->getELFSection(".debug_macro", DebugSecType, 0);
 
   // DWARF5 Experimental Debug Info
@@ -522,10 +526,8 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(const Triple &T, bool Large) {
       Ctx->getELFSection(".debug_loclists.dwo", DebugSecType, ELF::SHF_EXCLUDE);
 
   // DWP Sections
-  DwarfCUIndexSection =
-      Ctx->getELFSection(".debug_cu_index", DebugSecType, 0);
-  DwarfTUIndexSection =
-      Ctx->getELFSection(".debug_tu_index", DebugSecType, 0);
+  DwarfCUIndexSection = Ctx->getELFSection(".debug_cu_index", DebugSecType, 0);
+  DwarfTUIndexSection = Ctx->getELFSection(".debug_tu_index", DebugSecType, 0);
 
   StackMapSection =
       Ctx->getELFSection(".llvm_stackmaps", ELF::SHT_PROGBITS, ELF::SHF_ALLOC);

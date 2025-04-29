@@ -1925,21 +1925,17 @@ void MCAsmStreamer::emitCFISections(bool EH, bool Debug, bool SFrame) {
     OS << ".eh_frame";
     C = true;
   }
-  if (C) {
-    OS << ", ";
-    C = false;
-  }
   if (Debug) {
+    if (C)
+      OS << ", ";
     OS << ".debug_frame";
     C = true;
   }
-  if (C) {
-    OS << ", ";
-    C = false;
-  }
-  if (SFrame)
+  if (SFrame) {
+    if (C)
+      OS << ", ";
     OS << ".sframe";
-
+  }
   EmitEOL();
 }
 

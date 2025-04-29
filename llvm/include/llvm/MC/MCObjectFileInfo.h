@@ -49,6 +49,9 @@ protected:
   /// Compact unwind encoding indicating that we should emit only an EH frame.
   unsigned CompactUnwindDwarfEHFrameOnly = 0;
 
+  /// SFrame ABI architecture byte, sfh_abi_arch
+  uint8_t SFrameABIArch = 0;
+
   /// Section directive for standard text.
   MCSection *TextSection = nullptr;
 
@@ -270,6 +273,7 @@ public:
     return CompactUnwindDwarfEHFrameOnly;
   }
 
+  uint8_t getSFrameABIArch() const { return SFrameABIArch; }
   virtual unsigned getTextSectionAlignment() const { return 4; }
   MCSection *getTextSection() const { return TextSection; }
   MCSection *getDataSection() const { return DataSection; }
