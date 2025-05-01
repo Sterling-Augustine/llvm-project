@@ -755,7 +755,7 @@ public:
   unsigned getGenDwarfFileNumber() { return GenDwarfFileNumber; }
   EmitDwarfUnwindType emitDwarfUnwindInfo() const;
   bool emitCompactUnwindNonCanonical() const;
-  bool emitSFrames() const;
+  bool emitSFrameUnwind() const;
 
   void setGenDwarfFileNumber(unsigned FileNumber) {
     GenDwarfFileNumber = FileNumber;

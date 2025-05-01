@@ -44,7 +44,7 @@ struct __attribute__((packed)) sframe_preamble {
 static_assert(std::is_trivial_v<sframe_preamble>);
 static_assert(sizeof(sframe_preamble) == 4);
 
-static constexpr uint16_t SFRAME_MAGIC = 0xDEE2;
+constexpr uint16_t SFRAME_MAGIC = 0xDEE2;
 
 enum : uint8_t {
   SFRAME_VERSION_1 = 1,
@@ -125,8 +125,10 @@ enum sframe_fre_info : uint8_t {
   SFRAME_FRE_OFFSET_4B = (2 << 5),
 };
 
-static constexpr uint8_t SFRAME_BASE_REG_FP = 0;
-static constexpr uint8_t SFRAME_BASE_REG_SP = 1;
+enum sframe_base_reg : uint8_t {
+  SFRAME_BASE_REG_FP = 0,
+  SFRAME_BASE_REG_SP = 1
+};
 
 struct __attribute__((packed)) sframe_frame_row_entry_addr1 {
   uint8_t sfre_start_address;

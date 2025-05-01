@@ -7445,7 +7445,14 @@ def massembler_fatal_warnings : Flag<["-"], "massembler-fatal-warnings">,
   MarshallingInfoFlag<CodeGenOpts<"FatalWarnings">>;
 def crel : Flag<["--"], "crel">,
   HelpText<"Enable CREL relocation format (ELF only)">,
-  MarshallingInfoFlag<CodeGenOpts<"Crel">>;
+    MarshallingInfoFlag<CodeGenOpts<"Crel">>;
+def sframe : Flag<["-"], "sframe">,
+  HelpText<"Generate .sframe unwind sections (ELF only)">,
+  MarshallingInfoFlag<CodeGenOpts<"EmitSFrameUnwind">>;
+// The leading 'g' is inaccurate. This is an unwind tables option, not
+// a debug option. But maintain this alias for gnu compatibility.
+//def gsframe : Flag<["--"], "gsframe">, Alias<sframe>,
+//    HelpText<"Generate .sframe unwind sections. (ELF only)">;
 def mmapsyms_implicit : Flag<["-"], "mmapsyms=implicit">,
   HelpText<"Allow mapping symbol at section beginning to be implicit, "
     "lowering number of mapping symbols at the expense of some "

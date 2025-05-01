@@ -240,7 +240,7 @@ class SFrameEmitterImpl {
   MCSymbol *FRESubSectionEnd;
 
   // Add the effects of CFI to the current FRE, possibly creating a new
-  // one. Returns the label of the CFI that most recently affected the FRE.
+  // one. Returns a label that contains the current function offset.
   MCSymbol *HandleCFI(SFrameFDE &FDE, const MCCFIInstruction &CFI,
                       MCSymbol *LastLabel) {
     // Create a new FRE if needed.

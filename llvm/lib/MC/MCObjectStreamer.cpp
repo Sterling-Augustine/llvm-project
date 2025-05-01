@@ -132,6 +132,7 @@ void MCObjectStreamer::reset() {
   }
   EmitEHFrame = true;
   EmitDebugFrame = false;
+  EmitSFrame = false;
   MCStreamer::reset();
 }
 

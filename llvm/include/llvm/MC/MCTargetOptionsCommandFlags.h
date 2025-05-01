@@ -39,7 +39,7 @@ EmitDwarfUnwindType getEmitDwarfUnwind();
 
 bool getEmitCompactUnwindNonCanonical();
 
-bool getEmitSFrames();
+bool getEmitSFrameUnwind();
 
 bool getShowMCInst();
 

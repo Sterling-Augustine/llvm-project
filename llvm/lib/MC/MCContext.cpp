@@ -946,9 +946,9 @@ bool MCContext::emitCompactUnwindNonCanonical() const {
   return false;
 }
 
-bool MCContext::emitSFrames() const {
+bool MCContext::emitSFrameUnwind() const {
   if (TargetOptions)
-    return TargetOptions->EmitSFrames;
+    return TargetOptions->EmitSFrameUnwind;
   return false;
 }
 

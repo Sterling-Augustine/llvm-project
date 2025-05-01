@@ -163,6 +163,10 @@ struct AssemblerInvocation {
   LLVM_PREFERRED_TYPE(bool)
   unsigned EmitCompactUnwindNonCanonical : 1;
 
+  // Whether to emit sframe unwind sections
+  LLVM_PREFERRED_TYPE(bool)
+  unsigned EmitSFrameUnwind : 1;
+
   LLVM_PREFERRED_TYPE(bool)
   unsigned Crel : 1;
   LLVM_PREFERRED_TYPE(bool)
@@ -385,6 +389,7 @@ bool AssemblerInvocation::CreateFromArgs(AssemblerInvocation &Opts,
 
   Opts.EmitCompactUnwindNonCanonical =
       Args.hasArg(OPT_femit_compact_unwind_non_canonical);
+  Opts.EmitSFrameUnwind = Args.hasArg(OPT_sframe);
   Opts.Crel = Args.hasArg(OPT_crel);
   Opts.ImplicitMapsyms = Args.hasArg(OPT_mmapsyms_implicit);
   Opts.X86RelaxRelocations = !Args.hasArg(OPT_mrelax_relocations_no);
