@@ -116,7 +116,7 @@ class SFrameEmitterImpl {
       OffsetSize = SFRAME_FRE_OFFSET_2B;
     else
       OffsetSize = SFRAME_FRE_OFFSET_4B;
-    Info |= (OffsetSize << 5);
+    Info |= OffsetSize;
 
     // fre_mangled_ra_p (sframe_fre_info_word:7)
     // No support for fre_mangled_ra_p;
@@ -181,7 +181,9 @@ class SFrameEmitterImpl {
 
     SFrameFDE(const MCDwarfFrameInfo &DF, MCSymbol *FRES)
         : DFrame(DF), FREStart(FRES), FuncInfo(0) {
-
+      // Start with one FRE at the zero offset. HandleCFI will fill
+      // in the details.
+      FREs.emplace_back(0);
       // fretype (sfde_func_info:0-3)
       size_t CodeSize = DF.End->getOffset() - DF.Begin->getOffset();
       if (CodeSize <= std::numeric_limits<uint8_t>::max())
@@ -240,22 +242,31 @@ class SFrameEmitterImpl {
   MCSymbol *FRESubSectionEnd;
 
   // Add the effects of CFI to the current FRE, possibly creating a new
-  // one. Returns a label that contains the current function offset.
-  MCSymbol *HandleCFI(SFrameFDE &FDE, const MCCFIInstruction &CFI,
-                      MCSymbol *LastLabel) {
+  // one. Returns the offset that the current FRE describes.
+  void HandleCFI(SFrameFDE &FDE, const MCCFIInstruction &CFI) {
     // Create a new FRE if needed.
-    MCSymbol *Label = CFI.getLabel();
-    if (FDE.FREs.empty() ||
-        (Label != LastLabel && Label->getOffset() != LastLabel->getOffset())) {
-      TotalFREs++;
-      FDE.FREs.emplace_back(
-          Label ? Label->getOffset() - FDE.DFrame.Begin->getOffset() : 0);
+    if (auto *L = CFI.getLabel()) {
+      uint32_t NewOffset = L->getOffset() - FDE.DFrame.Begin->getOffset();
+      if (NewOffset != FDE.FREs.back().FuncOffset) {
+        TotalFREs++;
+        SFrameFRE& LastFRE = FDE.FREs.back();
+        FDE.FREs.emplace_back(LastFRE);
+        FDE.FREs.back().FuncOffset = NewOffset;
+      }
     }
     SFrameFRE &FRE = FDE.FREs.back();
 
     switch (CFI.getOperation()) {
-    case MCCFIInstruction::OpDefCfa:
     case MCCFIInstruction::OpDefCfaRegister:
+      if (CFI.getRegister() == SPReg)
+        FRE.FromFP = false;
+      else if (CFI.getRegister() == FPReg)
+        FRE.FromFP = true;
+      else
+        llvm_unreachable(
+            "Cfa not in SP or FP"); // FIXME: Does llvm sometimes do this?
+      break;
+    case MCCFIInstruction::OpDefCfa:
     case MCCFIInstruction::OpLLVMDefAspaceCfa:
       FRE.CfaOffset = CFI.getOffset();
       if (CFI.getRegister() == SPReg)
@@ -263,7 +274,20 @@ class SFrameEmitterImpl {
       else if (CFI.getRegister() == FPReg)
         FRE.FromFP = true;
       else
-        llvm_unreachable("Cfa not in SP or FP");
+        llvm_unreachable(
+            "Cfa not in SP or FP"); // FIXME: Does llvm sometimes do this?
+      break;
+    case MCCFIInstruction::OpOffset:
+      if (CFI.getRegister() == FPReg)
+        FRE.FPOffset = CFI.getOffset();
+      else if (CFI.getRegister() == RAReg)
+        FRE.RAOffset = CFI.getOffset();
+      break;
+    case MCCFIInstruction::OpRelOffset:
+      if (CFI.getRegister() == FPReg)
+        FRE.FPOffset += CFI.getOffset();
+      else if (CFI.getRegister() == RAReg)
+        FRE.RAOffset += CFI.getOffset();
       break;
     case MCCFIInstruction::OpDefCfaOffset:
       FRE.CfaOffset = CFI.getOffset();
@@ -272,19 +296,17 @@ class SFrameEmitterImpl {
       FRE.CfaOffset += CFI.getOffset();
       break;
     default:
-      // We only track instructions that affect the Cfa, RA, and SP; Others can
-      // be safely ignored.
+      // We only track instructions that affect the Cfa, RA, and SP; Others
+      // can be safely ignored.
       break;
     }
-    return Label;
   }
 
 public:
   SFrameEmitterImpl(MCObjectStreamer &Streamer)
       : Streamer(Streamer), TotalFREs(0) {
     FDEs.reserve(Streamer.getDwarfFrameInfos().size());
-    SFrameABI =
-        Streamer.getContext().getObjectFileInfo()->getSFrameABIArch();
+    SFrameABI = Streamer.getContext().getObjectFileInfo()->getSFrameABIArch();
 
     switch (SFrameABI) {
     case SFRAME_ABI_AARCH64_ENDIAN_BIG:
@@ -306,19 +328,17 @@ public:
 
   void BuildFDE(const MCDwarfFrameInfo &DF) {
     auto &FDE = FDEs.emplace_back(DF, Streamer.getContext().createTempSymbol());
-
-    MCSymbol* LastLabel = nullptr;
+    TotalFREs++;
     const MCAsmInfo *AsmInfo = Streamer.getContext().getAsmInfo();
-    for (const auto &CFI : AsmInfo->getInitialFrameState()) {
-      LastLabel = HandleCFI(FDE, CFI, LastLabel);
-    }
+    for (const auto &CFI : AsmInfo->getInitialFrameState())
+      HandleCFI(FDE, CFI);
 
     for (const auto& CFI : DF.Instructions) {
       // Instructions from InitialFrameState may not have a label, but if these
       // instructions don't, then they are in dead code or otherwise unused.
       auto* L = CFI.getLabel();
       if (L && L->isDefined())
-        LastLabel = HandleCFI(FDE, CFI, LastLabel);
+        HandleCFI(FDE, CFI);
     }
   }
 
