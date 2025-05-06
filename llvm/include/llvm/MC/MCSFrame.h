@@ -6,29 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains the declaration of the MCSFrame to support emitting
+// This file contains the declaration of MCSFrameEmitter to support emitting
 // sframe unwinding info from .cfi_* directives. It relies on FDEs and CIEs
-// created for Dwarf frame info, but emits the info in a different format.
+// created for Dwarf frame info, but emits that info in a different format.
+//
+// See https://sourceware.org/binutils/docs-2.41/sframe-spec.html
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_MC_MCSFRAME_H
 #define LLVM_MC_MCSFRAME_H
-
-#include "llvm/ADT/MapVector.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/MC/StringTableBuilder.h"
-#include "llvm/Support/Error.h"
-#include "llvm/Support/MD5.h"
-#include "llvm/Support/SMLoc.h"
-#include "llvm/Support/StringSaver.h"
-#include <cassert>
-#include <cstdint>
-#include <optional>
-#include <string>
-#include <utility>
-#include <vector>
 
 namespace llvm {
 
@@ -40,7 +26,7 @@ public:
   //
   // This emits the sframe section.
   //
-  static void Emit(MCObjectStreamer &streamer, MCAsmBackend *MAB);
+  static void Emit(MCObjectStreamer &streamer);
 };
 
 } // end namespace llvm

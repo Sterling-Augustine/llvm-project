@@ -2815,8 +2815,8 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
                                   llvm::codegenoptions::DebugInfoConstructor,
                                   DwarfVersion, llvm::DebuggerKind::Default);
         }
-      } else if (Value == "-sframe") {
-        CmdArgs.push_back("-sframe");
+      } else if (Value == "--gsframe") {
+        CmdArgs.push_back("--gsframe");
       } else if (Value.starts_with("-mcpu") || Value.starts_with("-mfpu") ||
                  Value.starts_with("-mhwdiv") || Value.starts_with("-march")) {
         // Do nothing, we'll validate it later.
@@ -6181,9 +6181,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Sframe unwind tables are independent of the other types, and only defined
   // for these two targets.
-  if (Arg *A = Args.getLastArg(options::OPT_sframe)) {
+  if (Arg *A = Args.getLastArg(options::OPT_gsframe)) {
     if ((Triple.isAArch64() || Triple.isX86()) && Triple.isOSBinFormatELF())
-      CmdArgs.push_back("-sframe");
+      CmdArgs.push_back("--gsframe");
     else
       D.Diag(diag::err_drv_unsupported_opt_for_target)
           << A->getOption().getName() << TripleStr;

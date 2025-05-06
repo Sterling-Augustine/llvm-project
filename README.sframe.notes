@@ -1,0 +1,173 @@
+Is the testcase cfi-sframe-common-[6|7] too strict in the number
+of FREs required?
+
+.cfi_startproc // fre 0 at offset 0
+.long 0
+.cfi_def_cfa_offset 8  // fre 1 at offset 4
+.long 0
+.cfi_offset 0, 8  // fre 2 at offset 8
+.long 0
+.cfi_endproc
+
+func idx [0]: pc = 0x0, size = 12 bytes
+    STARTPC         CFA       FP        RA           
+    0000000000000000  sp+8      u         f            
+    0000000000000004  sp+8      u         f            
+    0000000000000008  sp+8      u         f  
+
+Why is a new fre needed at offset 8?  `.cfi_offset 0, 8` doesn't
+modify SP or FP (or RA, for that matter).
+
+FRE 3 is is created due to a DW_CFA_advance_loc, and FRE 2 is not a
+merge_candidate because it created a new cfa. But couldn't FRE 2 be
+merged with FRE 3?
+
+This is similar to cfi-sframe-x86_64-1.s, which has a series of
+.cfi_offset instructions that shouldn't generate a new FRE. They
+actually do generate a new FRE (via sframe_row_entry_new), but but
+because that test case has a trailing .cfi_def_cfa, that new FRE gets
+updated into its own row. Remove that trailing .cfi_def_cfa, and the
+FRE created by .cfa_offset is still output.
+
+The FREs produced by gas are still correct, just not technically
+necessary.
+
+The patch below changes the tests to work this way.
+
+=-=-=-=-=-=-=-=
+
+LLVM has a built-in cfa expression parser, it's actually easier to
+make it properly parse and evaluate the test case in
+cfi-sframe-x86_64-empty-3.d, than to make it fail because the
+expression is too long. 
+
+=-=-=-=-=-=-=-=
+
+Why is sfde_func_start_fre_off zero in object files produced by gas? I
+assume it isn't that after final link, but isn't it known at assembly
+time?
+
+=-=-=-=-=-=-=-=
+
+SFRAME_BASE_REG_SP and SFRAME_BASE_REG_FP probably should show up in the docs.
+
+=-=-=-=-=-=-=-=
+
+Doc page 8 talks about if the RA or FP is being tracked, but the doc never
+describes how that decision is made. I gather it is based on the abi, but
+would be could to explicitly state.
+
+=-=-=-=-=-=-=-=
+
+LLVM doesn't have a drop-in assembler compatible with gas. It
+generally assumes that the assembler will be invoked by clang. For
+test purposes, llvm-mc ("mc" for "machine code"), is the tool to
+use. This requires some slight changes in hard-coded arguments to make
+the suite work for llvm-mc.
+
+Patch below makes binutils-gdb/gas/testsuite/cfi-sframe/cfi-sframe.exp suitable
+for use with llvm-mc as well as fixing up the test cases described above.
+
+runtest --tool gas --srcdir $PATH_TO_BINUTILS_GDB/gas/testsuite/ \
+  cfi-sframe.exp AS=$PATH_TO_LLVM_BUILD/bin/llvm-mc \
+  ASFLAGS="--assemble --filetype=obj"
+
+=-=-=-=-=-=-=-=
+
+diff --git a/gas/testsuite/gas/cfi-sframe/cfi-sframe-common-6.d b/gas/testsuite/gas/cfi-sframe/cfi-sframe-common-6.d
+index 34390c46a07..71ce01333fe 100644
+--- a/gas/testsuite/gas/cfi-sframe/cfi-sframe-common-6.d
++++ b/gas/testsuite/gas/cfi-sframe/cfi-sframe-common-6.d
+@@ -11,13 +11,12 @@ Contents of the SFrame section .sframe:
+ #?    CFA fixed FP offset: \-?\d+
+ #?    CFA fixed RA offset: \-?\d+
+     Num FDEs: 1
+-    Num FREs: 3
++    Num FREs: 2
+ 
+   Function Index :
+     func idx \[0\]: pc = 0x0, size = 12 bytes
+     STARTPC + CFA + FP + RA +
+ #...
+     0+0004 +sp\+8 +u +[uf] +
+-    0+0008 +sp\+8 +u +[uf] +
+ 
+ #pass
+diff --git a/gas/testsuite/gas/cfi-sframe/cfi-sframe-common-7.d b/gas/testsuite/gas/cfi-sframe/cfi-sframe-common-7.d
+index 61efb9c4ed1..8f25a0cdf3c 100644
+--- a/gas/testsuite/gas/cfi-sframe/cfi-sframe-common-7.d
++++ b/gas/testsuite/gas/cfi-sframe/cfi-sframe-common-7.d
+@@ -11,13 +11,12 @@ Contents of the SFrame section .sframe:
+ #?    CFA fixed FP offset: \-?\d+
+ #?    CFA fixed RA offset: \-?\d+
+     Num FDEs: 1
+-    Num FREs: 3
++    Num FREs: 2
+ 
+   Function Index :
+     func idx \[0\]: pc = 0x0, size = 12 bytes
+     STARTPC + CFA + FP + RA +
+ #...
+     0+0004 +sp\+8 +u +[uf] +
+-    0+0008 +sp\+8 +u +[uf] +
+ 
+ #pass
+diff --git a/gas/testsuite/gas/cfi-sframe/cfi-sframe-x86_64-1.d b/gas/testsuite/gas/cfi-sframe/cfi-sframe-x86_64-1.d
+index 88b4cc63dba..526e82df62d 100644
+--- a/gas/testsuite/gas/cfi-sframe/cfi-sframe-x86_64-1.d
++++ b/gas/testsuite/gas/cfi-sframe/cfi-sframe-x86_64-1.d
+@@ -1,4 +1,4 @@
+-#as: -O0
++#as:
+ #objdump: --sframe=.sframe
+ #name: SFrame generation on x86_64
+ #...
+diff --git a/gas/testsuite/gas/cfi-sframe/cfi-sframe-x86_64-empty-3.d b/gas/testsuite/gas/cfi-sframe/cfi-sframe-x86_64-empty-3.d
+index 177fb21fc8a..91571a48a1c 100644
+--- a/gas/testsuite/gas/cfi-sframe/cfi-sframe-x86_64-empty-3.d
++++ b/gas/testsuite/gas/cfi-sframe/cfi-sframe-x86_64-empty-3.d
+@@ -1,5 +1,4 @@
+ #as: --gsframe
+-#warning: skipping SFrame FDE; \.cfi\_escape with op \(0x14\)
+ #objdump: --sframe=.sframe
+ #name: CFI_escape with multiple DWARF expr
+ #...
+@@ -11,7 +10,14 @@ Contents of the SFrame section .sframe:
+     Flags: NONE
+ #?    CFA fixed FP offset: \-?\d+
+ #?    CFA fixed RA offset: \-?\d+
+-    Num FDEs: 0
+-    Num FREs: 0
++    Num FDEs: 1
++    Num FREs: 2
++
++  Function Index :
++    func idx \[0\]: pc = 0x0, size = 8 bytes
++    STARTPC + CFA + FP + RA +
++#...
++    0+0000 +sp\+8 +u +[uf] +
++    0+0004 +sp\+16 +u +[uf] +
+ 
+ #pass
+diff --git a/gas/testsuite/gas/cfi-sframe/cfi-sframe.exp b/gas/testsuite/gas/cfi-sframe/cfi-sframe.exp
+index a09946635c2..67ad495d120 100644
+--- a/gas/testsuite/gas/cfi-sframe/cfi-sframe.exp
++++ b/gas/testsuite/gas/cfi-sframe/cfi-sframe.exp
+@@ -41,7 +41,7 @@ proc gas_sframe_check { } {
+     global comp_output
+ 
+     set output_file "tmpdir/check_as_sframe.out"
+-    set status [gas_host_run "$AS $ASFLAGS $as_file" "2>$output_file"]
++    set status [gas_host_run "$AS $ASFLAGS -o /tmp/junk $as_file" "2>$output_file"]
+     set comp_output [file_contents "$output_file"]
+     set ASFLAGS "$old_ASFLAGS"
+ 
+@@ -88,7 +88,7 @@ if  { ([istarget "x86_64-*-*"] || [istarget "aarch64*-*-*"]) \
+ # x86-64 specific tests
+ if { [istarget "x86_64-*-*"] && [gas_sframe_check] } then {
+     if { [gas_x86_64_check] } then {
+-	set ASFLAGS "$ASFLAGS --64"
++	set ASFLAGS "$ASFLAGS"
+ 	run_dump_test "cfi-sframe-x86_64-1"
+ 	run_dump_test "cfi-sframe-x86_64-empty-1"
+ 	run_dump_test "cfi-sframe-x86_64-empty-2"

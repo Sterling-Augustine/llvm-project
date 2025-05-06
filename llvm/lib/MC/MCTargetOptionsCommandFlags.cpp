@@ -107,7 +107,7 @@ llvm::mc::RegisterMCTargetOptionsFlags::RegisterMCTargetOptionsFlags() {
   MCBINDOPT(EmitCompactUnwindNonCanonical);
 
   static cl::opt<bool> EmitSFrameUnwind(
-      "sframe", cl::desc("Whether to emit .sframe unwind sections."),
+      "gsframe", cl::desc("Whether to emit .sframe unwind sections."),
       cl::init(false));
   MCBINDOPT(EmitSFrameUnwind);
 

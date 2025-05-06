@@ -146,8 +146,10 @@ void MCObjectStreamer::emitFrames(MCAsmBackend *MAB) {
   if (EmitDebugFrame)
     MCDwarfFrameEmitter::Emit(*this, MAB, false);
 
-  if (EmitSFrame)
-    MCSFrameEmitter::Emit(*this, MAB);
+  // Users can turn on sframes with either the .cfi_sections directive (plumbed
+  // through emitCFISections), or by passing --gsframes on the command line.
+  if (EmitSFrame || getContext().getTargetOptions()->EmitSFrameUnwind)
+    MCSFrameEmitter::Emit(*this);
 }
 
 static bool canReuseDataFragment(const MCDataFragment &F,
