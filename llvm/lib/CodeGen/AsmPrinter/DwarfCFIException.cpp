@@ -112,8 +112,7 @@ void DwarfCFIException::beginBasicBlockSection(const MachineBasicBlock &MBB) {
         Asm->TM.Options.ForceDwarfFrameSection ||
         Asm->TM.Options.MCOptions.EmitSFrameUnwind)
       Asm->OutStreamer->emitCFISections(
-          CFISecType == AsmPrinter::CFISection::EH,
-          Asm->TM.Options.ForceDwarfFrameSection,
+          CFISecType == AsmPrinter::CFISection::EH, true,
           Asm->TM.Options.MCOptions.EmitSFrameUnwind);
     hasEmittedCFISections = true;
   }
