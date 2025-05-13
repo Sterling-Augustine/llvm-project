@@ -54,6 +54,9 @@ void MCFragment::destroy() {
     case FT_DwarfFrame:
       cast<MCDwarfCallFrameFragment>(this)->~MCDwarfCallFrameFragment();
       return;
+    case FT_SFrame:
+      cast<MCSFrameFragment>(this)->~MCSFrameFragment();
+      return;
     case FT_LEB:
       cast<MCLEBFragment>(this)->~MCLEBFragment();
       return;
@@ -111,6 +114,9 @@ LLVM_DUMP_METHOD void MCFragment::dump() const {
   case MCFragment::FT_Org:   OS << "MCOrgFragment"; break;
   case MCFragment::FT_Dwarf: OS << "MCDwarfFragment"; break;
   case MCFragment::FT_DwarfFrame: OS << "MCDwarfCallFrameFragment"; break;
+  case MCFragment::FT_SFrame:
+    OS << "MCSFrameFragment";
+    break;
   case MCFragment::FT_LEB:   OS << "MCLEBFragment"; break;
   case MCFragment::FT_BoundaryAlign: OS<<"MCBoundaryAlignFragment"; break;
   case MCFragment::FT_SymbolId:    OS << "MCSymbolIdFragment"; break;
@@ -197,6 +203,12 @@ LLVM_DUMP_METHOD void MCFragment::dump() const {
     const auto *CF = cast<MCDwarfCallFrameFragment>(this);
     OS << "\n       ";
     OS << " AddrDelta:" << CF->getAddrDelta();
+    break;
+  }
+  case MCFragment::FT_SFrame: {
+    const auto *SF = cast<MCSFrameFragment>(this);
+    OS << "\n       ";
+    OS << " AddrDelta:" << SF->getAddrDelta();
     break;
   }
   case MCFragment::FT_LEB: {

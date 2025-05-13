@@ -25,6 +25,7 @@
 #include "llvm/MC/MCFragment.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCObjectWriter.h"
+#include "llvm/MC/MCSFrame.h"
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCValue.h"
@@ -303,6 +304,8 @@ uint64_t MCAssembler::computeFragmentSize(const MCFragment &F) const {
     return cast<MCDwarfLineAddrFragment>(F).getContents().size();
   case MCFragment::FT_DwarfFrame:
     return cast<MCDwarfCallFrameFragment>(F).getContents().size();
+  case MCFragment::FT_SFrame:
+    return cast<MCSFrameFragment>(F).getContents().size();
   case MCFragment::FT_CVInlineLines:
     return cast<MCCVInlineLineTableFragment>(F).getContents().size();
   case MCFragment::FT_CVDefRange:
@@ -765,6 +768,11 @@ static void writeFragment(raw_ostream &OS, const MCAssembler &Asm,
     OS << CF.getContents();
     break;
   }
+  case MCFragment::FT_SFrame: {
+    const MCSFrameFragment &SF = cast<MCSFrameFragment>(F);
+    OS << SF.getContents();
+    break;
+  }
   case MCFragment::FT_CVInlineLines: {
     const auto &OF = cast<MCCVInlineLineTableFragment>(F);
     OS << OF.getContents();
@@ -956,6 +964,12 @@ void MCAssembler::layout() {
         MCDwarfCallFrameFragment &DF = cast<MCDwarfCallFrameFragment>(Frag);
         Fixups = DF.getFixups();
         Contents = DF.getContents();
+        break;
+      }
+      case MCFragment::FT_SFrame: {
+        MCSFrameFragment &SF = cast<MCSFrameFragment>(Frag);
+        Fixups = SF.getFixups();
+        Contents = SF.getContents();
         break;
       }
       case MCFragment::FT_LEB: {
@@ -1189,6 +1203,26 @@ bool MCAssembler::relaxDwarfCallFrameFragment(MCDwarfCallFrameFragment &DF) {
   return OldSize != Data.size();
 }
 
+bool MCAssembler::relaxSFrameFragment(MCSFrameFragment &SF) {
+  MCContext &Context = getContext();
+  int64_t Value;
+  bool Abs = SF.getAddrDelta().evaluateAsAbsolute(Value, *this);
+  if (!Abs) {
+    getContext().reportError(SF.getAddrDelta().getLoc(),
+                             "invalid CFI advance_loc expression in sframe");
+    SF.setAddrDelta(MCConstantExpr::create(0, Context));
+    return false;
+  }
+
+  SmallVectorImpl<char> &Data = SF.getContents();
+  uint64_t OldSize = Data.size();
+  Data.clear();
+  SF.getFixups().clear();
+
+  MCSFrameEmitter::encodeFuncOffset(Context, Value, Data, SF.getFDEFragment());
+  return OldSize != Data.size();
+}
+
 bool MCAssembler::relaxCVInlineLineTable(MCCVInlineLineTableFragment &F) {
   unsigned OldSize = F.getContents().size();
   getContext().getCVContext().encodeInlineLineTable(*this, F);
@@ -1229,6 +1263,8 @@ bool MCAssembler::relaxFragment(MCFragment &F) {
     return relaxDwarfLineAddr(cast<MCDwarfLineAddrFragment>(F));
   case MCFragment::FT_DwarfFrame:
     return relaxDwarfCallFrameFragment(cast<MCDwarfCallFrameFragment>(F));
+  case MCFragment::FT_SFrame:
+    return relaxSFrameFragment(cast<MCSFrameFragment>(F));
   case MCFragment::FT_LEB:
     return relaxLEB(cast<MCLEBFragment>(F));
   case MCFragment::FT_BoundaryAlign:

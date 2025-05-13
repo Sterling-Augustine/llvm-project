@@ -71,6 +71,7 @@ void MCObjectStreamer::resolvePendingFixups() {
     switch (SymFragment->getKind()) {
     case MCFragment::FT_Relaxable:
     case MCFragment::FT_Dwarf:
+    case MCFragment::FT_SFrame:
     case MCFragment::FT_PseudoProbe:
       cast<MCEncodedFragmentWithFixups<8, 1>>(SymFragment)
           ->getFixups()
@@ -504,6 +505,16 @@ void MCObjectStreamer::emitDwarfAdvanceFrameAddr(const MCSymbol *LastLabel,
                                                  SMLoc Loc) {
   const MCExpr *AddrDelta = buildSymbolDiff(*this, Label, LastLabel, Loc);
   insert(getContext().allocFragment<MCDwarfCallFrameFragment>(*AddrDelta));
+}
+
+void MCObjectStreamer::emitSFrameCalculateFuncOffset(const MCSymbol *FuncBase,
+                                                     const MCSymbol *FREBegin,
+                                                     MCSFrameFragment *FDEFrag,
+                                                     SMLoc Loc) {
+  assert(FuncBase && "No function base address");
+  assert(FREBegin && "FRE doesn't describe a location");
+  const MCExpr *AddrDelta = buildSymbolDiff(*this, FREBegin, FuncBase, Loc);
+  insert(getContext().allocFragment<MCSFrameFragment>(*AddrDelta, FDEFrag));
 }
 
 void MCObjectStreamer::emitCVLocDirective(unsigned FunctionId, unsigned FileNo,

@@ -35,6 +35,7 @@ class MCCVDefRangeFragment;
 class MCCVInlineLineTableFragment;
 class MCDwarfCallFrameFragment;
 class MCDwarfLineAddrFragment;
+class MCSFrameFragment;
 class MCEncodedFragment;
 class MCFixup;
 class MCLEBFragment;
@@ -120,6 +121,7 @@ private:
   bool relaxBoundaryAlign(MCBoundaryAlignFragment &BF);
   bool relaxDwarfLineAddr(MCDwarfLineAddrFragment &DF);
   bool relaxDwarfCallFrameFragment(MCDwarfCallFrameFragment &DF);
+  bool relaxSFrameFragment(MCSFrameFragment &DF);
   bool relaxCVInlineLineTable(MCCVInlineLineTableFragment &DF);
   bool relaxCVDefRange(MCCVDefRangeFragment &DF);
   bool relaxPseudoProbeAddr(MCPseudoProbeAddrFragment &DF);

@@ -21,6 +21,8 @@
 #include "llvm/MC/MCObjectStreamer.h"
 #include "llvm/MC/MCSection.h"
 #include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/EndianStream.h"
 
 using namespace llvm;
 using namespace sframe;
@@ -34,38 +36,21 @@ namespace {
 // being tracked.
 struct SFrameFRE {
   // An FRE describes how to find the registers when the PC is at this
-  // Offset from function start.
-  size_t FuncOffset = 0;
+  // Label from function start.
+  MCSymbol *Label = nullptr;
   size_t CfaOffset = 0;
   size_t FPOffset = 0;
   size_t RAOffset = 0;
   bool FromFP = false;
   bool CfaRegSet = false;
 
-  void Emit(MCStreamer &S, unsigned FDEI) {
-    // sfre_start_address. Technically an offset. Field-width chosen according
-    // to the enclosing function's size.
-    switch (FDEI & fretype_mask) {
-    case SFRAME_FRE_TYPE_ADDR1:
-      assert(FuncOffset < std::numeric_limits<uint8_t>::max() &&
-             "Miscalculated sdfe_func_info offset uint8_t");
-      S.emitInt8(FuncOffset & 0xFF);
-      break;
-    case SFRAME_FRE_TYPE_ADDR2:
-      assert(FuncOffset < std::numeric_limits<uint16_t>::max() &&
-             "Miscalculated sdfe_func_info offset uint16_t");
-      S.emitInt16(FuncOffset & 0xFFFF);
-      break;
-    case SFRAME_FRE_TYPE_ADDR4:
-      assert(FuncOffset < std::numeric_limits<uint32_t>::max() &&
-             "Miscalculated sdfe_func_info offset uint32_t");
-      S.emitInt32(FuncOffset);
-      break;
-    default:
-      // Should have errored long before this.
-      llvm_unreachable("SFrame v2 doesn't support 4GB functions");
-    }
+  SFrameFRE(MCSymbol *Start) : Label(Start) {}
 
+  void Emit(MCObjectStreamer &S, const MCSymbol *FuncBegin,
+            MCSFrameFragment *FDEFrag) {
+    S.emitSFrameCalculateFuncOffset(FuncBegin, Label, FDEFrag, SMLoc());
+
+    // sframe_fre_info_word
     unsigned Info = 0;
     // fre_cfa_base_reg_id (sframe_fre_info_word:0)
     if (!FromFP)
@@ -81,16 +66,15 @@ struct SFrameFRE {
 
     // fre_offset_size (sframe_fre_info_word:5-6)
     unsigned OffsetSize;
-    if ((CfaOffset <= std::numeric_limits<uint8_t>::max() &&
-         FPOffset <= std::numeric_limits<uint8_t>::max() &&
-         RAOffset <= std::numeric_limits<uint8_t>::max()))
+    if (isInt<8>(CfaOffset) && isInt<8>(FPOffset) && isInt<8>(RAOffset))
       OffsetSize = SFRAME_FRE_OFFSET_1B;
-    else if (CfaOffset <= std::numeric_limits<uint16_t>::max() &&
-             FPOffset <= std::numeric_limits<uint16_t>::max() &&
-             RAOffset <= std::numeric_limits<uint16_t>::max())
+    else if (isInt<16>(CfaOffset) && isInt<16>(FPOffset) && isInt<16>(RAOffset))
       OffsetSize = SFRAME_FRE_OFFSET_2B;
-    else
+    else {
+      assert(isInt<32>(CfaOffset) && isInt<32>(FPOffset) &&
+             isInt<32>(RAOffset) && "Offset too big for sframe");
       OffsetSize = SFRAME_FRE_OFFSET_4B;
+    }
     Info |= OffsetSize;
 
     // fre_mangled_ra_p (sframe_fre_info_word:7)
@@ -152,54 +136,51 @@ struct SFrameFDE {
   const MCDwarfFrameInfo &DFrame;
   // Used to create the offset from this FDE, but emitted with the FREs.
   MCSymbol *FREStart;
-  // Working copy of sfde_func_info word
-  unsigned FuncInfo;
   // True when unwind info can't be described with an Sframe FDE.
   bool Invalid;
   std::vector<SFrameFRE> FREs;
+  MCSFrameFragment *FDEFrag;
 
   SFrameFDE(const MCDwarfFrameInfo &DF, MCSymbol *FRES)
-      : DFrame(DF), FREStart(FRES), FuncInfo(0), Invalid(false) {
-    // Start with one FRE at the zero offset. HandleCFI will fill
-    // in the details.
-    FREs.emplace_back();
-    // fretype (sfde_func_info:0-3)
-    size_t CodeSize = DF.End->getOffset() - DF.Begin->getOffset();
-    if (CodeSize <= std::numeric_limits<uint8_t>::max())
-      FuncInfo |= SFRAME_FRE_TYPE_ADDR1;
-    else if (CodeSize <= std::numeric_limits<uint16_t>::max())
-      FuncInfo |= SFRAME_FRE_TYPE_ADDR2;
-    else
-      FuncInfo |= SFRAME_FRE_TYPE_ADDR4;
+      : DFrame(DF), FREStart(FRES), Invalid(false), FDEFrag(nullptr) {}
 
-    // fde_type (sfde_func_info:4)
-    // sfde_func_info PCMASK is typically used for PLTs. This is for normal
-    // functions.
-    FuncInfo |= SFRAME_FDE_TYPE_PCINC;
+  void Emit(MCObjectStreamer &S, MCSymbol *FRESubSectionStart) {
+    MCContext &C = S.getContext();
 
-    // pauth_key (sfde_func_info:5)
-    // No support.
-
-    // unused (sfde_func_info:6-7)
-    // Unused.
-  }
-
-  void Emit(MCStreamer &S, MCSymbol *FRESubSectionStart) {
     // sfde_func_start_address
-    S.emitSymbolValue(DFrame.Begin, sizeof(int32_t));
+    // Jump through some hoops to emit a pc relative relocation here.
+    const MCExpr *V = C.getAsmInfo()->getExprForFDESymbol(
+        &(*DFrame.Begin), C.getObjectFileInfo()->getFDEEncoding(), S);
+    S.emitValue(V, sizeof(int32_t));
+
     // sfde_func_size
     S.emitAbsoluteSymbolDiff(DFrame.End, DFrame.Begin, sizeof(uint32_t));
+
     // sfde_func_start_fre_off
-    // In spite of the documentation, the gnu assembler always emits zero here.
-    // Match that behavior for easier comparisons.
+    // The gnu assembler always emits zero here. Match that behavior for easier
+    // comparisons. The linker needs to update this field anyway.
     // S.emitAbsoluteSymbolDiff(FREStart, FRESubSectionStart, sizeof(uint32_t));
     S.emitInt32(0);
+
     // sfde_func_start_num_fres
     S.emitInt32(FREs.size());
-    // sfde_func_info
-    S.emitInt8(FuncInfo);
+
+    // sfde_func_info word
+
+    // All FREs within and FDE share the same SFRAME_FRE_TYPE_ADDRX, determined
+    // by the FRE with the largest offset, which is the last. This offset isn't
+    // known until relax time, so emit a frag which can calculate that now. Keep
+    // a pointer to it so the FREs can use the value it calculates during
+    // relaxation. This frag will set the entire fde_func_info word during
+    // relaxation. This particular frag doesn't encode the offset itself, just
+    // the proper X for ADDRX.
+    S.emitSFrameCalculateFuncOffset(DFrame.Begin, FREs.back().Label, nullptr,
+                                    SMLoc());
+    FDEFrag = cast<MCSFrameFragment>(S.getCurrentFragment());
+
     // sfde_func_rep_size. Not relevant in non-PCMASK fdes.
     S.emitInt8(0);
+
     // sfde_func_padding2
     S.emitInt16(0);
   }
@@ -390,12 +371,7 @@ class SFrameEmitterImpl {
 
   // Add the effects of CFI to the current FDE, creating a new FRE when
   // necessary.
-  void HandleCFI(SFrameFDE &FDE, const MCCFIInstruction &CFI) {
-    // Add a new FRE only when the instruction is both relevant to
-    // SFrame unwinding and starts at new offset. We don't know both
-    // until the end of the function, so work on a copy.
-    SFrameFRE FRE = FDE.FREs.back();
-
+  void HandleCFI(SFrameFDE &FDE, SFrameFRE &FRE, const MCCFIInstruction &CFI) {
     // Return on error or uninteresting CFI.
     switch (CFI.getOperation()) {
     case MCCFIInstruction::OpDefCfaRegister:
@@ -461,16 +437,6 @@ class SFrameEmitterImpl {
       // ignored.
       return;
     }
-
-    uint32_t NewOffset = 0;
-    if (auto *L = CFI.getLabel())
-      NewOffset = L->getOffset() - FDE.DFrame.Begin->getOffset();
-
-    if (NewOffset != FRE.FuncOffset) {
-      FRE.FuncOffset = NewOffset;
-      FDE.FREs.push_back(FRE);
-    } else
-      FDE.FREs.back() = FRE;
   }
 
     public:
@@ -499,9 +465,21 @@ class SFrameEmitterImpl {
         FRESubSectionEnd = Streamer.getContext().createTempSymbol();
       }
 
-      void BuildSFDE(const MCDwarfFrameInfo &DF) {
-        // SFrames don't support certain kinds of functions.
+      bool AtSameLocation(const MCSymbol *Left, const MCSymbol *Right) {
+        return Left != nullptr && Right != nullptr &&
+               Left->getFragment() == Right->getFragment() &&
+               Left->getOffset() == Right->getOffset();
+      }
 
+      bool EqualIgnoringLocation(const SFrameFRE &Left,
+                                 const SFrameFRE &Right) {
+        return Left.CfaOffset == Right.CfaOffset &&
+               Left.FPOffset == Right.FPOffset &&
+               Left.RAOffset == Right.RAOffset && Left.FromFP == Right.FromFP &&
+               Left.CfaRegSet == Right.CfaRegSet;
+      }
+
+      void BuildSFDE(const MCDwarfFrameInfo &DF) {
         auto &FDE =
             FDEs.emplace_back(DF, Streamer.getContext().createTempSymbol());
         // This would have been set via ".cfi_return_column", but
@@ -518,21 +496,40 @@ class SFrameEmitterImpl {
           // the end.
           FDE.Invalid = true;
         }
-        const MCAsmInfo *AsmInfo = Streamer.getContext().getAsmInfo();
+        MCSymbol *BaseLabel = DF.Begin;
+        SFrameFRE BaseFRE(BaseLabel);
         if (!DF.IsSimple) {
-          for (const auto &CFI : AsmInfo->getInitialFrameState())
-            HandleCFI(FDE, CFI);
+          for (const auto &CFI :
+               Streamer.getContext().getAsmInfo()->getInitialFrameState())
+            HandleCFI(FDE, BaseFRE, CFI);
         }
+        FDE.FREs.push_back(BaseFRE);
 
         for (const auto &CFI : DF.Instructions) {
           // Instructions from InitialFrameState may not have a label, but if
           // these instructions don't, then they are in dead code or otherwise
           // unused.
           auto *L = CFI.getLabel();
-          if (L && L->isDefined())
-            HandleCFI(FDE, CFI);
+          if (L && !L->isDefined())
+            continue;
+
+          SFrameFRE FRE = FDE.FREs.back();
+          HandleCFI(FDE, FRE, CFI);
+
+          // If nothing relevant but the location changed, don't add the FRE.
+          if (EqualIgnoringLocation(FRE, FDE.FREs.back()))
+            continue;
+
+          // If the location stayed the same, then update the current
+          // row. Otherwise, add a new one.
+          if (AtSameLocation(BaseLabel, L))
+            FDE.FREs.back() = FRE;
+          else {
+            FDE.FREs.push_back(FRE);
+            FDE.FREs.back().Label = L;
+            BaseLabel = L;
+          }
         }
-        // Building these even if some info is invalid reports every error.
         if (FDE.Invalid)
           FDEs.pop_back();
       }
@@ -594,7 +591,7 @@ class SFrameEmitterImpl {
         for (auto FDE : FDEs) {
           Streamer.emitLabel(FDE.FREStart);
           for (auto &FRE : FDE.FREs) {
-            FRE.Emit(Streamer, FDE.FuncInfo);
+            FRE.Emit(Streamer, FDE.DFrame.Begin, FDE.FDEFrag);
           }
         }
         Streamer.emitLabel(FRESubSectionEnd);
@@ -614,10 +611,62 @@ void MCSFrameEmitter::Emit(MCObjectStreamer &Streamer) {
     Emitter.BuildSFDE(DFrame);
 
   MCSection *Section = Context.getObjectFileInfo()->getSFrameSection();
+  // Not strictly necessary, but gas always aligns to 8, so match that.
+  Section->ensureMinAlignment(Align(8));
   Streamer.switchSection(Section);
   MCSymbol *SectionStart = Context.createTempSymbol();
   Streamer.emitLabel(SectionStart);
   Emitter.EmitHeader();
   Emitter.EmitFDEs();
   Emitter.EmitFREs();
+}
+
+void MCSFrameEmitter::encodeFuncOffset(MCContext &C, uint64_t Offset,
+                                       SmallVectorImpl<char> &Out,
+                                       MCSFrameFragment *FDEFrag) {
+  // If encoding into the FDE Frag itself, generate the sfde_info_word.
+  if (FDEFrag == nullptr) {
+    // sfde_func_info
+
+    char FuncInfo = 0;
+    // Offset is the difference between the function start label and the final
+    // FRE's offset, which is the max offset for this FDE.
+
+    // sframe_fretype_addr (sfde_func_info:0-1)
+    if (isUInt<8>(Offset))
+      FuncInfo |= SFRAME_FRE_TYPE_ADDR1;
+    else if (isUInt<16>(Offset))
+      FuncInfo |= SFRAME_FRE_TYPE_ADDR2;
+    else {
+      assert(isUInt<32>(Offset));
+      FuncInfo |= SFRAME_FRE_TYPE_ADDR4;
+    }
+    // sframe_fde_type (sfde_func_info:4)
+    FuncInfo |= SFRAME_FDE_TYPE_PCINC;
+
+    // pauth_key (sfde_func_info:5)
+    // No support.
+
+    // unused (sfde_func_info:6-7)
+    // Unused.
+    Out.push_back(FuncInfo);
+  } else {
+    llvm::endianness E = C.getAsmInfo()->isLittleEndian()
+                             ? llvm::endianness::little
+                             : llvm::endianness::big;
+    // sfre_start_address
+    const auto &FDEData = FDEFrag->getContents();
+    assert(FDEData.size() == 1 && "Unexpected FDEInfo Frag");
+    char FREType = FDEData[0] & fretype_mask;
+    if (FREType == SFRAME_FRE_TYPE_ADDR1) {
+      assert(isUInt<8>(Offset) && "Miscalculated SFRAME_FRE_TYPE");
+      support::endian::write<uint8_t>(Out, Offset, E);
+    } else if (FREType == SFRAME_FRE_TYPE_ADDR2) {
+      assert(isUInt<16>(Offset) && "Miscalculated SFRAME_FRE_TYPE");
+      support::endian::write<uint16_t>(Out, Offset, E);
+    } else if (FREType == SFRAME_FRE_TYPE_ADDR4) {
+      assert(isUInt<32>(Offset) && "Miscalculated SFRAME_FRE_TYPE");
+      support::endian::write<uint32_t>(Out, Offset, E);
+    }
+  }
 }

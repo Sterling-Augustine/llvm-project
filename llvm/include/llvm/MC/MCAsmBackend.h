@@ -20,6 +20,7 @@ namespace llvm {
 class MCAlignFragment;
 class MCDwarfCallFrameFragment;
 class MCDwarfLineAddrFragment;
+class MCSFrameFragment;
 class MCFragment;
 class MCLEBFragment;
 class MCRelaxableFragment;
@@ -179,6 +180,11 @@ public:
   virtual bool relaxDwarfCFA(const MCAssembler &Asm,
                              MCDwarfCallFrameFragment &DF,
                              bool &WasRelaxed) const {
+    return false;
+  }
+
+  virtual bool relaxSFrameCFA(const MCAssembler &Asm, MCSFrameFragment &DF,
+                              bool &WasRelaxed) const {
     return false;
   }
 

@@ -16,10 +16,16 @@
 #ifndef LLVM_MC_MCSFRAME_H
 #define LLVM_MC_MCSFRAME_H
 
+#include <cstdint>
+
+#include "llvm/ADT/SmallVector.h"
+
 namespace llvm {
 
-class MCObjectStreamer;
 class MCAsmBackend;
+class MCContext;
+class MCObjectStreamer;
+class MCSFrameFragment;
 
 class MCSFrameEmitter {
 public:
@@ -27,6 +33,9 @@ public:
   // This emits the sframe section.
   //
   static void Emit(MCObjectStreamer &streamer);
+  static void encodeFuncOffset(MCContext &C, uint64_t Offset,
+                               SmallVectorImpl<char> &Data,
+                               MCSFrameFragment *FDEFrag);
 };
 
 } // end namespace llvm

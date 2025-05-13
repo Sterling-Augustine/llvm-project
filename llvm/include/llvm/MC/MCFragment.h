@@ -44,6 +44,7 @@ public:
     FT_Org,
     FT_Dwarf,
     FT_DwarfFrame,
+    FT_SFrame,
     FT_LEB,
     FT_BoundaryAlign,
     FT_SymbolId,
@@ -142,6 +143,7 @@ public:
     case MCFragment::FT_Data:
     case MCFragment::FT_Dwarf:
     case MCFragment::FT_DwarfFrame:
+    case MCFragment::FT_SFrame:
     case MCFragment::FT_PseudoProbe:
       return true;
     }
@@ -204,7 +206,7 @@ public:
     MCFragment::FragmentType Kind = F->getKind();
     return Kind == MCFragment::FT_Relaxable || Kind == MCFragment::FT_Data ||
            Kind == MCFragment::FT_CVDefRange || Kind == MCFragment::FT_Dwarf ||
-           Kind == MCFragment::FT_DwarfFrame;
+           Kind == MCFragment::FT_DwarfFrame || Kind == MCFragment::FT_SFrame;
   }
 };
 
@@ -441,6 +443,32 @@ public:
 
   static bool classof(const MCFragment *F) {
     return F->getKind() == MCFragment::FT_DwarfFrame;
+  }
+};
+
+class MCSFrameFragment : public MCEncodedFragmentWithFixups<4, 1> {
+  /// Expression for the difference of the two symbols between the start of the
+  /// function and the unwind info at the offset described by the FRE.
+  const MCExpr *AddrDelta;
+  // Every FRE in the enclosing FDE uses the same field size, as recorded in the
+  // enclosing FDE. Somewhat circularly, this size is determined by the largest
+  // offset any of the FREs must encode, and cannot be determined until relax
+  // time. The FDEFragment calculates the field size, and stores it for the
+  // others to use.
+  MCSFrameFragment *FDEFragment;
+
+public:
+  MCSFrameFragment(const MCExpr &AddrDelta, MCSFrameFragment *FDEFragment)
+      : MCEncodedFragmentWithFixups<4, 1>(FT_SFrame, false),
+        AddrDelta(&AddrDelta), FDEFragment(FDEFragment) {}
+
+  const MCExpr &getAddrDelta() const { return *AddrDelta; }
+  void setAddrDelta(const MCExpr *E) { AddrDelta = E; }
+
+  MCSFrameFragment *getFDEFragment() const { return FDEFragment; }
+
+  static bool classof(const MCFragment *F) {
+    return F->getKind() == MCFragment::FT_SFrame;
   }
 };
 
