@@ -632,7 +632,7 @@ void MCSFrameEmitter::encodeFuncOffset(MCContext &C, uint64_t Offset,
     // Offset is the difference between the function start label and the final
     // FRE's offset, which is the max offset for this FDE.
 
-    // sframe_fretype_addr (sfde_func_info:0-1)
+    // sframe_fretype_addr (sfde_func_info:0-3)
     if (isUInt<8>(Offset))
       FuncInfo |= SFRAME_FRE_TYPE_ADDR1;
     else if (isUInt<16>(Offset))
