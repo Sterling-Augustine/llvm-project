@@ -43,6 +43,7 @@ class ELFFileBase;
 class SharedFile;
 class InputSectionBase;
 class EhInputSection;
+class SFrameInputSection;
 class Defined;
 class Undefined;
 class Symbol;
@@ -89,7 +90,6 @@ enum class BsymbolicKind { None, NonWeakFunctions, Functions, NonWeak, All };
 
 // For --build-id.
 enum class BuildIdKind { None, Fast, Md5, Sha1, Hexstring, Uuid };
-
 // For --call-graph-profile-sort={none,hfsort,cdsort}.
 enum class CGProfileSortKind { None, Hfsort, Cdsort };
 
@@ -640,6 +640,7 @@ struct Ctx : CommonLinkerContext {
   SmallVector<BitcodeFile *, 0> lazyBitcodeFiles;
   SmallVector<InputSectionBase *, 0> inputSections;
   SmallVector<EhInputSection *, 0> ehInputSections;
+  SmallVector<SFrameInputSection *, 0> sFrameInputSections;
 
   SmallVector<SymbolAux, 0> symAux;
   // Duplicate symbol candidates.

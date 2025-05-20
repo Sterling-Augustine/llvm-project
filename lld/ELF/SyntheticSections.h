@@ -102,6 +102,45 @@ private:
   llvm::DenseMap<std::pair<ArrayRef<uint8_t>, Symbol *>, CieRecord *> cieMap;
 };
 
+// Section for .sframe.
+// .sframe is in three parts: A short header, an array of fixed-size sframe FDEs
+// (called the FDE subsection), and then a series of variable-length FREs
+// (called the FRE subsection). Each FDE contains an offset from the start of
+// the FRE subsection section to its FREs.
+class SFrameSection final : public SyntheticSection {
+public:
+  SFrameSection(Ctx &);
+  void writeTo(uint8_t *buf) override;
+  void finalizeContents() override;
+  bool isNeeded() const override { return !sections.empty(); }
+  size_t getSize() const override { return size; }
+
+  static bool classof(const SectionBase *d) {
+    return SyntheticSection::classof(d) && d->name == ".sframe";
+  }
+
+  SmallVector<SFrameInputSection *, 0> sections;
+  // These must match for input section we combine. They are written to the
+  // header.
+  uint8_t abiArch = 0;
+  uint8_t fpOff = 0;
+  uint8_t raOff = 0;
+
+private:
+  uint64_t size = sizeof(llvm::sframe::sframe_header);
+
+  template <class ELFT, class RelTy>
+  void addRecords(SFrameInputSection *s, llvm::ArrayRef<RelTy> rels);
+  template <class ELFT> void addSectionAux(SFrameInputSection *s);
+
+  Defined *isFdeLive(Symbol &sym);
+
+  uint32_t numFdes = 0;
+  // The total number of individual fre rows. Needed for the header.
+  uint32_t numFres = 0;
+  uint64_t freSubSecLen = 0;
+};
+
 class GotSection final : public SyntheticSection {
 public:
   GotSection(Ctx &);
@@ -1458,6 +1497,7 @@ InputSection *createInterpSection(Ctx &);
 MergeInputSection *createCommentSection(Ctx &);
 template <class ELFT> void splitSections(Ctx &);
 void combineEhSections(Ctx &);
+void combineSFrameSections(Ctx &);
 
 bool hasMemtag(Ctx &);
 bool canHaveMemtagGlobals(Ctx &);
@@ -1513,6 +1553,7 @@ struct Partition {
   std::unique_ptr<SymbolTableBaseSection> dynSymTab;
   std::unique_ptr<EhFrameHeader> ehFrameHdr;
   std::unique_ptr<EhFrameSection> ehFrame;
+  std::unique_ptr<SFrameSection> sFrame;
   std::unique_ptr<GnuHashTableSection> gnuHashTab;
   std::unique_ptr<HashTableSection> hashTab;
   std::unique_ptr<MemtagAndroidNote> memtagAndroidNote;

@@ -658,6 +658,126 @@ void EhFrameSection::writeTo(uint8_t *buf) {
     getPartition(ctx).ehFrameHdr->write();
 }
 
+
+SFrameSection::SFrameSection(Ctx &ctx)
+    : SyntheticSection(ctx, ".sframe", SHT_PROGBITS, SHF_ALLOC, 1)  {}
+
+// There is one function per FDE. Returns a non-null pointer to the function
+// symbol if the given Symbol points to a live function.
+Defined *SFrameSection::isFdeLive(Symbol &sym) {
+  // FDEs for garbage-collected or merged-by-ICF sections, or sections in
+  // another partition, are dead.
+  if (auto *d = dyn_cast<Defined>(&sym))
+    if (!d->folded && d->section && d->section->partition == partition)
+      return d;
+  return nullptr;
+}
+
+template <class ELFT, class RelTy>
+void SFrameSection::addRecords(SFrameInputSection *sec, ArrayRef<RelTy> rels) {
+  using llvm::sframe::sframe_func_desc_entry;
+  assert(rels.size() == sec->fdes.size() && "Unexpected number of relocations");
+  numFdes += sec->fdes.size();
+  numFres += sec->numFres;
+  uint32_t secFreSubSecLen = sec->freSubSecLen;
+  uint32_t liveFdes = sec->fdes.size();
+  // Use index-based iteration to easily calculate the size of SectionPieces.
+  size_t C = sec->fdes.size();
+  for (size_t i = 0; i < C; i++) {
+    Symbol& S = sec->file->getRelocTargetSym(rels[i]);
+    if (!isFdeLive(S)) {
+      liveFdes--;
+      sec->fdes[i].live = false;
+      sec->fres[i].live = false;
+      numFres -= endian::read32<ELFT::Endianness>(
+          sec->content().data() + sec->fdes[i].inputOff +
+          offsetof(sframe_func_desc_entry, sfde_func_num_fres));
+      secFreSubSecLen -= sec->freSize(i);
+    }
+  }
+  size +=
+      liveFdes * sizeof(sframe_func_desc_entry) + secFreSubSecLen;
+  freSubSecLen += secFreSubSecLen;
+}
+
+template <class ELFT>
+void SFrameSection::addSectionAux(SFrameInputSection *sec) {
+  if (!sec->isLive())
+    return;
+  const RelsOrRelas<ELFT> rels =
+      sec->template relsOrRelas<ELFT>(/*supportsCrel=*/false);
+  if (rels.areRelocsRel())
+    addRecords<ELFT>(sec, rels.rels);
+  else
+    addRecords<ELFT>(sec, rels.relas);
+}
+
+void SFrameSection::finalizeContents() {
+  switch (ctx.arg.ekind) {
+  case ELFNoneKind:
+    llvm_unreachable("invalid ekind");
+  case ELF32LEKind:
+    for (SFrameInputSection *sec : sections)
+      addSectionAux<ELF32LE>(sec);
+    break;
+  case ELF32BEKind:
+    for (SFrameInputSection *sec : sections)
+      addSectionAux<ELF32BE>(sec);
+    break;
+  case ELF64LEKind:
+    for (SFrameInputSection *sec : sections)
+      addSectionAux<ELF64LE>(sec);
+    break;
+  case ELF64BEKind:
+    for (SFrameInputSection *sec : sections)
+      addSectionAux<ELF64BE>(sec);
+    break;
+  }
+
+  //   this->size = off;
+}
+
+
+void SFrameSection::writeTo(uint8_t *buf) {
+  using llvm::sframe::sframe_preamble;
+  using llvm::sframe::sframe_header;
+  using llvm::sframe::sframe_func_desc_entry;
+  // Write the common parts of the header by copying from an input
+  // section. We checked for compatibility earlier.
+  memcpy(buf, (*sections.begin())->content().data(), sizeof(sframe_header));
+  // Now modify the fields that changed.
+  buf[offsetof(sframe_preamble, sfp_flags)] |= sframe::SFRAME_F_FDE_SORTED;
+  write32(ctx, buf + offsetof(sframe_header, sfh_num_fdes), numFdes);
+  write32(ctx, buf + offsetof(sframe_header, sfh_num_fres), numFres);
+  write32(ctx, buf + offsetof(sframe_header, sfh_fre_len), freSubSecLen);
+  uint32_t freOff = numFdes * sizeof(sframe_func_desc_entry);
+  write32(ctx, buf + offsetof(sframe_header, sfh_freoff), freOff);
+
+  // if sfh_auxhdr_len is ever non-zero, add it here.
+  uint8_t *fdeOutBuf = buf + sizeof(sframe_header);
+  uint8_t *freOutBase = fdeOutBuf + freOff;
+  uint32_t freOutOff = 0;
+  for (SFrameInputSection *sec : sections) {
+    const uint8_t* id = sec->content().data();
+    for (size_t i = 0; i < sec->fdes.size(); i++) {
+      if (!sec->fdes[i].live)
+        continue;
+      memcpy(fdeOutBuf, id + sec->fdes[i].inputOff,
+             sizeof(sframe_func_desc_entry));
+      write32(ctx,
+              fdeOutBuf +
+                  offsetof(sframe_func_desc_entry, sfde_func_start_fre_off),
+              freOutOff);
+      uint32_t fs = sec->freSize(i);
+      memcpy(freOutBase + freOutOff, id + sec->fres[i].inputOff, fs);
+      freOutOff += fs;
+      fdeOutBuf += sizeof(sframe_func_desc_entry);
+    }
+  }
+  // apply relocs to fdes before sorting.
+  // sort fdes. Offsets to fres won't change.
+}
+
 GotSection::GotSection(Ctx &ctx)
     : SyntheticSection(ctx, ".got", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE,
                        ctx.target->gotEntrySize) {
@@ -4037,6 +4157,8 @@ template <class ELFT> void elf::splitSections(Ctx &ctx) {
         s->splitIntoPieces();
       else if (auto *eh = dyn_cast<EhInputSection>(sec))
         eh->split<ELFT>();
+      else if (auto *sf = dyn_cast<SFrameInputSection>(sec))
+        sf->split<ELFT>();
     }
   });
 }
@@ -4062,6 +4184,25 @@ void elf::combineEhSections(Ctx &ctx) {
     return s->kind() == SectionBase::Regular && part.armExidx &&
            part.armExidx->addSection(cast<InputSection>(s));
   });
+}
+
+void elf::combineSFrameSections(Ctx &ctx) {
+  llvm::TimeTraceScope timeScope("Combine SFrame sections");
+  for (SFrameInputSection *sec : ctx.sFrameInputSections) {
+    SFrameSection &sf = *sec->getPartition(ctx).sFrame;
+    // TODO: These should be errors instead of assertions.
+    assert(sf.abiArch == 0 || (sf.abiArch == sec->abiArch));
+    sf.abiArch = sec->abiArch;
+    assert(sf.fpOff == 0 || (sf.fpOff == sec->fpOff));
+    sf.fpOff = sec->fpOff;
+    assert(sf.raOff == 0 || (sf.raOff == sec->raOff));
+    sf.raOff = sec->raOff;
+
+    sec->parent = &sf;
+    sf.addralign = std::max(sf.addralign, sec->addralign);
+    sf.sections.push_back(sec);
+    llvm::append_range(sf.dependentSections, sec->dependentSections);
+  }
 }
 
 MipsRldMapSection::MipsRldMapSection(Ctx &ctx)
@@ -4862,6 +5003,9 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
     }
     part.ehFrame = std::make_unique<EhFrameSection>(ctx);
     add(*part.ehFrame);
+
+    part.sFrame = std::make_unique<SFrameSection>(ctx);
+    add(*part.sFrame);
 
     if (ctx.arg.emachine == EM_ARM) {
       // This section replaces all the individual .ARM.exidx InputSections.

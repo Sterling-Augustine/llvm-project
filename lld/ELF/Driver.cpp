@@ -3208,6 +3208,8 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
           continue;
         if (LLVM_UNLIKELY(isa<EhInputSection>(s)))
           ctx.ehInputSections.push_back(cast<EhInputSection>(s));
+        if (LLVM_UNLIKELY(isa<SFrameInputSection>(s)))
+          ctx.sFrameInputSections.push_back(cast<SFrameInputSection>(s));
         else
           ctx.inputSections.push_back(s);
       }
@@ -3304,6 +3306,10 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
   // output sections in the usual way.
   if (!ctx.arg.relocatable)
     combineEhSections(ctx);
+
+  // SFrameInputSections cannot be directly appended to each other, so must
+  // be programmatically merged, relocatable-link or not.
+  combineSFrameSections(ctx);
 
   // Merge .riscv.attributes sections.
   if (ctx.arg.emachine == EM_RISCV)

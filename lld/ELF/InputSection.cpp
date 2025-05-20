@@ -220,6 +220,9 @@ uint64_t SectionBase::getOffset(uint64_t offset) const {
         return isec->outSecOff + es->getParentOffset(offset);
     return offset;
   }
+  case SFrame: {
+    llvm_unreachable("Fixme sframe getoffset");
+  }
   case Merge:
     const MergeInputSection *ms = cast<MergeInputSection>(this);
     if (InputSection *isec = ms->getParent())
@@ -242,6 +245,8 @@ OutputSection *SectionBase::getOutputSection() {
     sec = ms->getParent();
   else if (auto *eh = dyn_cast<EhInputSection>(this))
     sec = eh->getParent();
+  else if (auto *sf = dyn_cast<SFrameInputSection>(this))
+    sec = sf->getParent();
   else
     return cast<OutputSection>(this);
   return sec ? sec->getParent() : nullptr;
@@ -506,6 +511,7 @@ void InputSection::copyRelocations(Ctx &ctx, uint8_t *buf,
       // See the comment in maybeReportUndefined for PPC32 .got2 and PPC64 .toc
       auto *d = dyn_cast<Defined>(&sym);
       if (!d) {
+        assert(sec->name != ".sframe" && "FIXME: handle sframes.");
         if (!isDebugSection(*sec) && sec->name != ".eh_frame" &&
             sec->name != ".gcc_except_table" && sec->name != ".got2" &&
             sec->name != ".toc") {
@@ -1428,6 +1434,147 @@ static size_t findNull(StringRef s, size_t entSize) {
   llvm_unreachable("");
 }
 
+template <class ELFT>
+SFrameInputSection::SFrameInputSection(ObjFile<ELFT> &f,
+                                       const typename ELFT::Shdr &header,
+                                       StringRef name)
+    : InputSectionBase(f, header, name, InputSectionBase::SFrame) {}
+
+SyntheticSection *SFrameInputSection::getParent() const {
+  return cast_or_null<SyntheticSection>(parent);
+}
+
+template <class ELFT> void SFrameInputSection::split() {
+  const RelsOrRelas<ELFT> rels = relsOrRelas<ELFT>(/*supportsCrel=*/false);
+  // getReloc expects the relocations to be sorted by r_offset. See the comment
+  // in scanRelocs.
+  if (rels.areRelocsRel()) {
+    SmallVector<typename ELFT::Rel, 0> storage;
+    split<ELFT>(sortRels(rels.rels, storage));
+  } else {
+    SmallVector<typename ELFT::Rela, 0> storage;
+    split<ELFT>(sortRels(rels.relas, storage));
+  }
+}
+
+// .sframe
+template <class ELFT, class RelTy>
+void SFrameInputSection::split(ArrayRef<RelTy> rels) {
+  using llvm::sframe::sframe_preamble;
+  using llvm::sframe::sframe_header;
+  using llvm::sframe::sframe_func_desc_entry;
+  // header
+  ArrayRef<uint8_t> d = content();
+  if (d.size() < sizeof(sframe_header)) {
+    Err(file->ctx) << "corrupted .sframe:\n>>> defined in "
+                   << getObjMsg(d.data() - content().data());
+    return;
+  }
+
+  if (endian::read16<ELFT::Endianness>(&d[0]) != sframe::SFRAME_MAGIC) {
+    Err(file->ctx) << "corrupted .sframe:\n>>> defined in "
+                   << getObjMsg(d.data() - content().data());
+    return;
+  }
+  uint8_t version = d[offsetof(sframe_preamble, sfp_version)];
+  if (version != sframe::SFRAME_VERSION_2) {
+    Err(file->ctx) << "unsupported .sframe version: " << version
+                   << "\n>>> defined in "
+                   << getObjMsg(d.data() - content().data());
+    return;
+  }
+  /// These are all single-bytes, so don't need endianness fixes
+  preserveFp = (d[offsetof(sframe_preamble, sfp_flags)] &
+                llvm::sframe::SFRAME_F_FRAME_POINTER) != 0;
+  abiArch = d[offsetof(sframe_header, sfh_abi_arch)];
+  fpOff = d[offsetof(sframe_header, sfh_cfa_fixed_fp_offset)];
+  raOff = d[offsetof(sframe_header, sfh_cfa_fixed_ra_offset)];
+  uint8_t auxHdrLen = d[offsetof(sframe_header, sfh_auxhdr_len)];
+
+  // ABIs are allowed to extend the header with custom data, but as of this
+  // writing, none have.
+  if (auxHdrLen != 0) {
+    Err(file->ctx) << "Unknown .sframe auxhdr defined in "
+                   << getObjMsg(d.data() - content().data());
+    return;
+  }
+
+  uint32_t numFdes = endian::read32<ELFT::Endianness>(
+      &d[offsetof(sframe_header, sfh_num_fdes)]);
+  numFres = endian::read32<ELFT::Endianness>(
+      &d[offsetof(sframe_header, sfh_num_fres)]);
+  freSubSecLen = endian::read32<ELFT::Endianness>(
+      &d[offsetof(sframe_header, sfh_fre_len)]);
+  uint32_t freOff =
+      endian::read32<ELFT::Endianness>(&d[offsetof(sframe_header, sfh_freoff)]);
+
+  // FREs come last, so this size check accounts for both FDEs and FREs.
+  if (d.size() < sizeof(sframe_header) + auxHdrLen + freOff + freSubSecLen) {
+    Err(file->ctx) << "corrupted .sframe: section too small\n>>> defined in "
+                   << getObjMsg(d.data() - content().data());
+    return;
+  }
+
+  // FDE and FRE subsections. Each FDE includes an offset from the start of
+  // the FRE subsection to it's own FREs. Because of this, the two subsections
+  // are best handled in parallel.
+  fdes.reserve(numFdes);
+  fres.reserve(numFdes);
+  ArrayRef fdeSubSec = d.slice(sizeof(sframe_header) + auxHdrLen,
+                               numFdes * sizeof(sframe_func_desc_entry));
+  size_t freSubSecOff = sizeof(sframe_header) + auxHdrLen + freOff;
+  size_t fdeFreOff = 0;
+  [[maybe_unused]] size_t lastFdeFreOff = 0;
+  // fdes end where fres begin.
+  for (uint32_t i = 0; i < numFdes; i++) {
+    size_t fdeOff = i * sizeof(sframe_func_desc_entry);
+    fdes.emplace_back(fdeOff + sizeof(sframe_header), /*hash*/ 0,
+                      /*live*/ true);
+    // Find the offset to this FDE's FREs.
+    lastFdeFreOff = fdeFreOff;
+    fdeFreOff = endian::read32<ELFT::Endianness>(
+        fdeSubSec.data() + fdeOff +
+        offsetof(sframe_func_desc_entry, sfde_func_start_fre_off));
+    // SFrameInputSection::freSize assumes FREs are in the same order as the
+    // FDEs. Nothing in the spec requires that, but gas and llvm generate them
+    // that way. Eventually we should deduplicate these entries which would
+    // require a different method for sizing them.
+    assert((fdeFreOff == 0 || fdeFreOff > lastFdeFreOff) &&
+           "FREs out of expected order.");
+
+    if (fdeFreOff >= d.size()) {
+      Err(file->ctx) << "corrupted .sframe: section fre-offset "
+                     << Twine(fdeFreOff) << " out of range ("
+                     << freOff + freSubSecLen << ")\n>>> defined in "
+                     << getObjMsg(d.data() - content().data());
+      return;
+    }
+    fres.emplace_back(freSubSecOff + fdeFreOff, /*hash*/ 0, /*live*/ true);
+  }
+  // An sframe section should have one relocation per fde. No more, no less.
+  assert(fdes.size() == rels.size() &&
+         "Unexpected number of relocations for sframe section.");
+}
+
+// Return the offset in an output section for a given input offset.
+uint64_t SFrameInputSection::getParentOffset(uint64_t offset) const {
+  using llvm::sframe::sframe_header;
+  using llvm::sframe::sframe_func_desc_entry;
+  // These two assertions may turn out to be invalid, but for now avoid
+  // more complicated calculations. This function is hopefully only
+  // used for relocations, which only are in the FDE subsection.
+
+  // Header from an input .sframe never has output.
+  assert(offset >= sizeof(sframe_header) && "offset in the header");
+  // Avoid complicated calculatations in the fre subsection.
+  assert (offset < fres.front().inputOff && "offset in the fres");
+
+  assert(0);
+  uint64_t idx =
+      (offset - sizeof(sframe_header)) % sizeof(sframe_func_desc_entry);
+  return fdes[idx].outputOff;
+}
+
 // Split SHF_STRINGS section. Such section is a sequence of
 // null-terminated strings.
 void MergeInputSection::splitStrings(StringRef s, size_t entSize) {
@@ -1556,3 +1703,21 @@ template void EhInputSection::split<ELF32LE>();
 template void EhInputSection::split<ELF32BE>();
 template void EhInputSection::split<ELF64LE>();
 template void EhInputSection::split<ELF64BE>();
+
+template SFrameInputSection::SFrameInputSection(ObjFile<ELF32LE> &,
+                                                const ELF32LE::Shdr &,
+                                                StringRef);
+template SFrameInputSection::SFrameInputSection(ObjFile<ELF32BE> &,
+                                                const ELF32BE::Shdr &,
+                                                StringRef);
+template SFrameInputSection::SFrameInputSection(ObjFile<ELF64LE> &,
+                                                const ELF64LE::Shdr &,
+                                                StringRef);
+template SFrameInputSection::SFrameInputSection(ObjFile<ELF64BE> &,
+                                                const ELF64BE::Shdr &,
+                                                StringRef);
+
+template void SFrameInputSection::split<ELF32LE>();
+template void SFrameInputSection::split<ELF32BE>();
+template void SFrameInputSection::split<ELF64LE>();
+template void SFrameInputSection::split<ELF64BE>();

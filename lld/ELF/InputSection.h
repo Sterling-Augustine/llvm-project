@@ -18,6 +18,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/TinyPtrVector.h"
+#include "llvm/BinaryFormat/SFrame.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/Compiler.h"
 
@@ -64,6 +65,7 @@ public:
     Synthetic,
     Spill,
     EHFrame,
+    SFrame,
     Merge,
     Output,
     Class,
@@ -408,11 +410,81 @@ public:
   uint64_t getParentOffset(uint64_t offset) const;
 };
 
-// This is a section that is added directly to an output section
-// instead of needing special combination via a synthetic section. This
-// includes all input sections with the exceptions of SHF_MERGE and
-// .eh_frame. It also includes the synthetic sections themselves.
+// This corresponds to an .sframe section of an input file.
+// .sframe is in three parts: A short header, an array of fixed-size sframe FDEs
+// (called the FDE subsection), and then a series of variable-length FREs
+// (called the FRE subsection).
+class SFrameInputSection : public InputSectionBase {
+public:
+  template <class ELFT>
+  SFrameInputSection(ObjFile<ELFT> &f, const typename ELFT::Shdr &header,
+                     StringRef name);
+  static bool classof(const SectionBase *s) { return s->kind() == SFrame; }
+  template <class ELFT> void split();
+  template <class ELFT, class RelTy> void split(ArrayRef<RelTy> rels);
+
+  // An sframe section contains a lot off offsets. Keeping track of what offset
+  // is relative to what can be confusing. Especially because offsets within the
+  // section itself are also relevant when reading or writing data for a
+  // particular sframe structure.
+  //
+  // Within a section, the sframe_header is at offset zero.
+  //
+  // Offsets in the sframe_header are relative to start of the FDE subsection.
+  //
+  // Within a section, the FDE subsection starts at:
+  // sizeof(sframe_header) + sfh_auxhdr_len.
+  //
+  // The FDE subsection is an array of fixed-length sframe_func_desc_entry, so
+  // its size can be calculated with num_fdes * sizeof(fde).
+  //
+  // Offsets in a sframe_func_desc_entry are relative to the start of the
+  // FRE subsection.
+  //
+  // Within a section, the FRE subsection starts at:
+  // sizeof(sframe_header) + sfh_auxhdr_len + sfh_fre_off
+  //
+  // sfh_fre_off also marks the end of the FDE subsection, so is calculated
+  // using the size of the FDE subsection.
+  //
+  // The FRE subsection is a collection of many sframe_row_entries_addrx. These
+  // are variably sized. An FDE refers to a set of rows by their offset and a
+  // count. Most of this code treats this set as "an FRE", as each row is useful
+  // only within its group.
+  //
+  // Most fields in an sframe are 32-bits, so do most calculations in that width.
+
+  // Decoded from the sframe header. These must match for each input section we
+  // combine, except for numFres.
+  uint8_t abiArch;
+  uint8_t fpOff;
+  uint8_t raOff;
+  bool preserveFp;
+  uint32_t numFres;
+  // Keep fdes indvidually, rather than as an entire input subsection. This
+  // makes it possible to garbage collect fdes for discarded functions.
+  SmallVector<SectionPiece> fdes;
+  // These are not individual FREs, but rather the set of FREs referenced by an
+  // fde at the same index.
+  SmallVector<SectionPiece> fres;
+  uint32_t freSubSecLen;
+  // Fre entries are SectionPieces, calculate the size by the difference of
+  // offsets.
+  uint32_t freSize(uint32_t idx) {
+    if (idx == fres.size() - 1)
+      return size - fres[idx].inputOff;
+    return fres[idx + 1].inputOff - fres[idx].inputOff;
+  }
+  SyntheticSection *getParent() const;
+  uint64_t getParentOffset(uint64_t offset) const;
+};
+
+// This is a section that is added directly to an output section instead of
+// needing special combination via a synthetic section. This includes all input
+// sections with the exceptions of SHF_MERGE, .eh_frame, and .sframe. It also
+// includes the synthetic sections themselves.
 class InputSection : public InputSectionBase {
+
 public:
   InputSection(InputFile *f, StringRef name, uint32_t type, uint64_t flags,
                uint32_t addralign, uint32_t entsize, ArrayRef<uint8_t> data,

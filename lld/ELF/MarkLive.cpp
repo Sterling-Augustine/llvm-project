@@ -370,6 +370,12 @@ void MarkLive<ELFT, TrackWhyLive>::run() {
     else if (rels.relas.size())
       scanEhFrameSection(*eh, rels.relas);
   }
+  for (SFrameInputSection *sf : ctx.sFrameInputSections) {
+    // Individual FDEs are live if the function they describe is also live, and
+    // that must be decided on an SectionPiece level.  FIXME: Temporary until
+    // a better solution can be implemented.
+    sf->markLive();
+  }
   for (InputSectionBase *sec : ctx.inputSections) {
     if (sec->flags & SHF_GNU_RETAIN) {
       enqueue(sec, /*offset=*/0, /*sym=*/nullptr, {std::nullopt, "retained"});

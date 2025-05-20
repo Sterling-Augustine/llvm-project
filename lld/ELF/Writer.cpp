@@ -1848,6 +1848,11 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
       for (Partition &part : ctx.partitions)
         finalizeSynthetic(ctx, part.ehFrame.get());
     }
+    {
+      llvm::TimeTraceScope timeScope("Finalize .sframe");
+      for (Partition &part : ctx.partitions)
+        finalizeSynthetic(ctx, part.sFrame.get());
+    }
   }
 
   // If the previous code block defines any non-hidden symbols (e.g.
