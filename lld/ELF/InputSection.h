@@ -410,6 +410,22 @@ public:
   uint64_t getParentOffset(uint64_t offset) const;
 };
 
+// Class to keep track of an SFrame fde and its associated set of fres.
+struct SFrameSectionPiece {
+  SFrameSectionPiece(size_t fdeInputOff, size_t freInputOff)
+      : fdeInputOff(fdeInputOff), freInputOff(freInputOff) {};
+
+  size_t fdeInputOff;
+  size_t freInputOff;
+  size_t freSize = 0;
+  bool live = true;
+  // The relocation mechanism needs to know this value for the pc relative
+  // relocation.
+  size_t fdeOutputOff = 0;
+  // freOutputOff is calculated while writing the output section, and nothing
+  // else needs it.
+};
+
 // This corresponds to an .sframe section of an input file.
 // .sframe is in three parts: A short header, an array of fixed-size sframe FDEs
 // (called the FDE subsection), and then a series of variable-length FREs
@@ -423,10 +439,14 @@ public:
   template <class ELFT> void split();
   template <class ELFT, class RelTy> void split(ArrayRef<RelTy> rels);
 
-  // An sframe section contains a lot off offsets. Keeping track of what offset
-  // is relative to what can be confusing. Especially because offsets within the
-  // section itself are also relevant when reading or writing data for a
-  // particular sframe structure.
+  // Most of the complexity in the sframe implementation stems from converting
+  // between three kinds of offsets:
+  //
+  // 1. Between sframe internal structures.
+  // 2. In input sections.
+  // 3. In output sections.
+  //
+  // Here is a summary of the different offsets.
   //
   // Within a section, the sframe_header is at offset zero.
   //
@@ -449,31 +469,35 @@ public:
   //
   // The FRE subsection is a collection of many sframe_row_entries_addrx. These
   // are variably sized. An FDE refers to a set of rows by their offset and a
-  // count. Most of this code treats this set as "an FRE", as each row is useful
-  // only within its group.
+  // count. Most of this code treats this set as "an FRE", as each individual
+  // row is useful only within its group.
   //
-  // Most fields in an sframe are 32-bits, so do most calculations in that width.
+  // SFrameInputSections cannot be concatenated; The subsections must be
+  // combined. But because we want to garbage collect dead FDEs and their
+  // associated FREs, we can't concatenate the subsections either. This also
+  // complicates converting from an input section offset to an output section
+  // offset.
+  //
+  // Most fields in an sframe are 32-bits, so do most calculations in that
+  // width.
 
   // Decoded from the sframe header. These must match for each input section we
   // combine, except for numFres.
   uint8_t abiArch;
+  uint8_t auxHdrLen;
   uint8_t fpOff;
   uint8_t raOff;
   bool preserveFp;
+  // Count of the raw fre rows, which is required for the header
   uint32_t numFres;
+
   // Keep fdes indvidually, rather than as an entire input subsection. This
   // makes it possible to garbage collect fdes for discarded functions.
-  SmallVector<SectionPiece> fdes;
-  // These are not individual FREs, but rather the set of FREs referenced by an
-  // fde at the same index.
-  SmallVector<SectionPiece> fres;
+  SmallVector<SFrameSectionPiece> fdes;
+
   uint32_t freSubSecLen;
-  // Fre entries are SectionPieces, calculate the size by the difference of
-  // offsets.
-  uint32_t freSize(uint32_t idx) {
-    if (idx == fres.size() - 1)
-      return size - fres[idx].inputOff;
-    return fres[idx + 1].inputOff - fres[idx].inputOff;
+  uint64_t getFdeSubSectionOff() const {
+    return sizeof(llvm::sframe::sframe_header) + auxHdrLen;
   }
   SyntheticSection *getParent() const;
   uint64_t getParentOffset(uint64_t offset) const;

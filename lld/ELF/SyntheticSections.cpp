@@ -658,9 +658,8 @@ void EhFrameSection::writeTo(uint8_t *buf) {
     getPartition(ctx).ehFrameHdr->write();
 }
 
-
 SFrameSection::SFrameSection(Ctx &ctx)
-    : SyntheticSection(ctx, ".sframe", SHT_PROGBITS, SHF_ALLOC, 1)  {}
+    : SyntheticSection(ctx, ".sframe", SHT_PROGBITS, SHF_ALLOC, 1) {}
 
 // There is one function per FDE. Returns a non-null pointer to the function
 // symbol if the given Symbol points to a live function.
@@ -677,26 +676,31 @@ template <class ELFT, class RelTy>
 void SFrameSection::addRecords(SFrameInputSection *sec, ArrayRef<RelTy> rels) {
   using llvm::sframe::sframe_func_desc_entry;
   assert(rels.size() == sec->fdes.size() && "Unexpected number of relocations");
+  uint64_t fdeOutOff =
+      sec->getFdeSubSectionOff() + numFdes * sizeof(sframe_func_desc_entry);
   numFdes += sec->fdes.size();
   numFres += sec->numFres;
   uint32_t secFreSubSecLen = sec->freSubSecLen;
   uint32_t liveFdes = sec->fdes.size();
-  // Use index-based iteration to easily calculate the size of SectionPieces.
+  // FIXME: We probably need to uniquify these after icf, but the symbols
+  // will be different and not resolved to addresses yet.
   size_t C = sec->fdes.size();
   for (size_t i = 0; i < C; i++) {
-    Symbol& S = sec->file->getRelocTargetSym(rels[i]);
-    if (!isFdeLive(S)) {
+    Symbol &S = sec->file->getRelocTargetSym(rels[i]);
+    if (isFdeLive(S)) {
+      sec->fdes[i].fdeOutputOff = fdeOutOff;
+      fdeOutOff += sizeof(sframe_func_desc_entry);
+    } else {
       liveFdes--;
       sec->fdes[i].live = false;
-      sec->fres[i].live = false;
-      numFres -= endian::read32<ELFT::Endianness>(
-          sec->content().data() + sec->fdes[i].inputOff +
-          offsetof(sframe_func_desc_entry, sfde_func_num_fres));
-      secFreSubSecLen -= sec->freSize(i);
+      sec->fdes[i].fdeOutputOff = uint64_t(-1);
+      numFres -=
+          read32(ctx, sec->content().data() + sec->fdes[i].fdeInputOff +
+                          offsetof(sframe_func_desc_entry, sfde_func_num_fres));
+      secFreSubSecLen -= sec->fdes[i].freSize;
     }
   }
-  size +=
-      liveFdes * sizeof(sframe_func_desc_entry) + secFreSubSecLen;
+  size += liveFdes * sizeof(sframe_func_desc_entry) + secFreSubSecLen;
   freSubSecLen += secFreSubSecLen;
 }
 
@@ -733,15 +737,12 @@ void SFrameSection::finalizeContents() {
       addSectionAux<ELF64BE>(sec);
     break;
   }
-
-  //   this->size = off;
 }
 
-
 void SFrameSection::writeTo(uint8_t *buf) {
-  using llvm::sframe::sframe_preamble;
-  using llvm::sframe::sframe_header;
   using llvm::sframe::sframe_func_desc_entry;
+  using llvm::sframe::sframe_header;
+  using llvm::sframe::sframe_preamble;
   // Write the common parts of the header by copying from an input
   // section. We checked for compatibility earlier.
   memcpy(buf, (*sections.begin())->content().data(), sizeof(sframe_header));
@@ -753,28 +754,49 @@ void SFrameSection::writeTo(uint8_t *buf) {
   uint32_t freOff = numFdes * sizeof(sframe_func_desc_entry);
   write32(ctx, buf + offsetof(sframe_header, sfh_freoff), freOff);
 
-  // if sfh_auxhdr_len is ever non-zero, add it here.
-  uint8_t *fdeOutBuf = buf + sizeof(sframe_header);
-  uint8_t *freOutBase = fdeOutBuf + freOff;
-  uint32_t freOutOff = 0;
+  // Sort output fdes by target address. Use references so that we can update
+  // fdeOutputOff in place for the relocation mechanism.
+  using VaFde = std::tuple<uint64_t, SFrameSectionPiece &, SFrameInputSection *>;
+  SmallVector<VaFde> outputFdes;
+  outputFdes.reserve(numFdes);
   for (SFrameInputSection *sec : sections) {
-    const uint8_t* id = sec->content().data();
-    for (size_t i = 0; i < sec->fdes.size(); i++) {
-      if (!sec->fdes[i].live)
+    uint64_t secAddr = sec->getOutputSection()->addr;
+    if (auto *s = dyn_cast<InputSection>(sec))
+      secAddr += s->outSecOff;
+    for (const auto& [fde, rel] : zip_equal(sec->fdes, sec->relocs())) {
+      if (!fde.live)
         continue;
-      memcpy(fdeOutBuf, id + sec->fdes[i].inputOff,
-             sizeof(sframe_func_desc_entry));
-      write32(ctx,
-              fdeOutBuf +
-                  offsetof(sframe_func_desc_entry, sfde_func_start_fre_off),
-              freOutOff);
-      uint32_t fs = sec->freSize(i);
-      memcpy(freOutBase + freOutOff, id + sec->fres[i].inputOff, fs);
-      freOutOff += fs;
-      fdeOutBuf += sizeof(sframe_func_desc_entry);
+      outputFdes.push_back(
+          {sec->getRelocTargetVA(ctx, rel, secAddr + rel.offset), fde, sec});
     }
   }
-  // apply relocs to fdes before sorting.
+
+  llvm::stable_sort(outputFdes, [&](const VaFde &l, const VaFde &r) {
+    return std::get<0>(l) < std::get<0>(r);
+  });
+
+  uint64_t fdeOutOff = (*sections.begin())->getFdeSubSectionOff();
+  uint64_t freOutSectionOff = (*sections.begin())->getFdeSubSectionOff() + freOff;
+  uint64_t freOutOff = 0;
+  for (auto &f : outputFdes) {
+    auto& fde = std::get<1>(f);
+    auto sec = std::get<2>(f);
+    const uint8_t *id = sec->content().data();
+    fde.fdeOutputOff = fdeOutOff;
+    memcpy(buf + fdeOutOff, id + fde.fdeInputOff,
+           sizeof(sframe_func_desc_entry));
+    write32(ctx,
+            buf + fdeOutOff +
+                offsetof(sframe_func_desc_entry, sfde_func_start_fre_off),
+            freOutOff);
+    memcpy(buf + freOutSectionOff + freOutOff, id + fde.freInputOff, fde.freSize);
+    freOutOff += fde.freSize;
+    fdeOutOff += sizeof(sframe_func_desc_entry);
+  }
+
+  for (SFrameInputSection *s : sections)
+    ctx.target->relocateAlloc(*s, buf);
+
   // sort fdes. Offsets to fres won't change.
 }
 
