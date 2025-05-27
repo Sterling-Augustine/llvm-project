@@ -391,32 +391,17 @@ template <class ELFT> static void addCopyRelSymbol(Ctx &ctx, SharedSymbol &ss) {
   ctx.mainPart->relaDyn->addSymbolReloc(ctx.target->copyRel, *sec, 0, ss);
 }
 
-// This class handles non-linear offset computation for mergable sections
-// without linear mappings to output sections. Calculating those offsets can be
-// expensive, so this class speeds up those computations.
+// .eh_frame sections are mergeable input sections, so their input
+// offsets are not linearly mapped to output section. For each input
+// offset, we need to find a section piece containing the offset and
+// add the piece's base address to the input offset to compute the
+// output offset. That isn't cheap.
 //
-// For .eh_frame:
+// This class is to speed up the offset computation. When we process
+// relocations, we access offsets in the monotonically increasing
+// order. So we can optimize for that access pattern.
 //
-// For each input offset, we need to find a section piece containing the offset
-// and add the piece's base address to the input offset to compute the output
-// offset. That isn't cheap.
-//
-// When we process relocations, we access offsets in the monotonically
-// increasing order. So we can optimize for that access pattern.
-//
-// For .sframe:
-//
-// There is exactly one relocation per fde, in the fde's first field--
-// start_address. Because FDEs are in array starting at a known offset, we can
-// use the relocation's offset to calculate the proper fde, which has the correct
-// outputOff within the output section.
-//
-// For sections other than .eh_frame and .sframe, this class doesn't do
-// anything.
-//
-// TODO: This functionality should probably be moved into a virtual function
-// with InputSectionBase returning the identity and eh_frame and sframe
-// doing their own calculations.
+// For sections other than .eh_frame, this class doesn't do anything.
 namespace {
 class OffsetGetter {
 public:
@@ -427,46 +412,38 @@ public:
       fdes = eh->fdes;
       i = cies.begin();
       j = fdes.begin();
-      return;
     }
-    // sfsec will be nullptr if this cast fails.
-    sfsec = dyn_cast<SFrameInputSection>(&sec);
   }
 
   // Translates offsets in input sections to offsets in output sections.
+  // Given offset must increase monotonically. We assume that Piece is
+  // sorted by inputOff.
   uint64_t get(Ctx &ctx, uint64_t off) {
-    if (cies.empty() && sfsec == nullptr)
+    if (cies.empty())
       return off;
-    // an eh_frame section.
-    if (!cies.empty()) {
-      // Given offset must increase monotonically. We assume that Piece is
-      // sorted by inputOff.
-      while (j != fdes.end() && j->inputOff <= off)
-        ++j;
-      auto it = j;
-      if (j == fdes.begin() || j[-1].inputOff + j[-1].size <= off) {
-        while (i != cies.end() && i->inputOff <= off)
-          ++i;
-        if (i == cies.begin() || i[-1].inputOff + i[-1].size <= off) {
-          Err(ctx) << ".eh_frame: relocation is not in any piece";
-          return 0;
-        }
-        it = i;
-      }
 
-      // Offset -1 means that the piece is dead (i.e. garbage collected).
-      if (it[-1].outputOff == -1)
-        return -1;
-      return it[-1].outputOff + (off - it[-1].inputOff);
+    while (j != fdes.end() && j->inputOff <= off)
+      ++j;
+    auto it = j;
+    if (j == fdes.begin() || j[-1].inputOff + j[-1].size <= off) {
+      while (i != cies.end() && i->inputOff <= off)
+        ++i;
+      if (i == cies.begin() || i[-1].inputOff + i[-1].size <= off) {
+        Err(ctx) << ".eh_frame: relocation is not in any piece";
+        return 0;
+      }
+      it = i;
     }
-    // sframe section
-    return sfsec->getParentOffset(off);
+
+    // Offset -1 means that the piece is dead (i.e. garbage collected).
+    if (it[-1].outputOff == -1)
+      return -1;
+    return it[-1].outputOff + (off - it[-1].inputOff);
   }
 
 private:
   ArrayRef<EhSectionPiece> cies, fdes;
   ArrayRef<EhSectionPiece>::iterator i, j;
-  SFrameInputSection *sfsec = nullptr;
 };
 
 // This class encapsulates states needed to scan relocations for one
@@ -1759,18 +1736,6 @@ template <class ELFT> void elf::scanRelocations(Ctx &ctx) {
       scanEH();
     else
       tg.spawn(scanEH);
-
-    auto scanSFrame = [&] {
-      RelocationScanner scanner(ctx);
-      for (Partition &part : ctx.partitions) {
-        for (SFrameInputSection *sec : part.sFrame->sections)
-          scanner.template scanSection<ELFT>(*sec, /*isEH=*/false);
-      }
-    };
-    if (serial)
-      scanSFrame();
-    else
-      tg.spawn(scanSFrame);
   };
   // If `serial` is true, call `spawn` to ensure that `scanner` runs in a thread
   // with valid getThreadIndex().
@@ -1779,6 +1744,23 @@ template <class ELFT> void elf::scanRelocations(Ctx &ctx) {
   else
     outerFn();
 }
+
+
+// Scanning sframe relocations separately allows deferring until after the plt
+// is built. All the relocations inside an sframe section are resolvable
+// statically.
+template <class ELFT> void elf::scanSFrameRelocations(Ctx &ctx) {
+  auto scanSFrame = [&] {
+    RelocationScanner scanner(ctx);
+    for (Partition &part : ctx.partitions) {
+      for (SFrameInputSection *sec : part.sFrame->sections)
+        scanner.template scanSection<ELFT>(*sec, /*isEH=*/false);
+    }
+  };
+  parallel::TaskGroup tg;
+  tg.spawn(scanSFrame);
+}
+
 
 RelocationBaseSection &elf::getIRelativeSection(Ctx &ctx) {
   // Prior to Android V, there was a bug that caused RELR relocations to be
@@ -2619,6 +2601,11 @@ template void elf::scanRelocations<ELF32LE>(Ctx &);
 template void elf::scanRelocations<ELF32BE>(Ctx &);
 template void elf::scanRelocations<ELF64LE>(Ctx &);
 template void elf::scanRelocations<ELF64BE>(Ctx &);
+
+template void elf::scanSFrameRelocations<ELF32LE>(Ctx &);
+template void elf::scanSFrameRelocations<ELF32BE>(Ctx &);
+template void elf::scanSFrameRelocations<ELF64LE>(Ctx &);
+template void elf::scanSFrameRelocations<ELF64BE>(Ctx &);
 
 template void elf::checkNoCrossRefs<ELF32LE>(Ctx &);
 template void elf::checkNoCrossRefs<ELF32BE>(Ctx &);

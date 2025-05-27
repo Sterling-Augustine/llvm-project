@@ -37,6 +37,8 @@ public:
   void writePltHeader(uint8_t *buf) const override;
   void writePlt(uint8_t *buf, const Symbol &sym,
                 uint64_t pltEntryAddr) const override;
+  const ArrayRef<uint8_t> pltHeaderSFrameFres() const override;
+  const ArrayRef<uint8_t> pltSFrameFres() const override;
   void relocate(uint8_t *loc, const Relocation &rel,
                 uint64_t val) const override;
   int64_t getImplicitAddend(const uint8_t *buf, RelType type) const override;
@@ -56,7 +58,7 @@ private:
   void relaxTlsGdToIe(uint8_t *loc, const Relocation &rel, uint64_t val) const;
   void relaxTlsLdToLe(uint8_t *loc, const Relocation &rel, uint64_t val) const;
   void relaxTlsIeToLe(uint8_t *loc, const Relocation &rel, uint64_t val) const;
-};
+  };
 } // namespace
 
 // This is vector of NOP instructions of sizes from 1 to 8 bytes.  The
@@ -463,6 +465,32 @@ void X86_64::writePlt(uint8_t *buf, const Symbol &sym,
   write32le(buf + 2, sym.getGotPltVA(ctx) - pltEntryAddr - 6);
   write32le(buf + 7, sym.getPltIdx(ctx));
   write32le(buf + 12, ctx.in.plt->getVA() - pltEntryAddr - 16);
+}
+
+// Sframe fres to unwind the stack through a plt header
+const ArrayRef<uint8_t> X86_64::pltHeaderSFrameFres() const {
+  // Offsets are are small and only track the cfa register
+  const uint8_t freInfo = (llvm::sframe::SFRAME_FRE_OFFSET_1B |
+                           llvm::sframe::SFRAME_BASE_REG_SP | (1 << 1));
+  // start_address, info, variable-number of trailing offsets
+  static SmallVector<uint8_t> fres = {
+    0, freInfo, 16, // fre0 at start, cfa = SP - 16
+    6, freInfo, 24  // fre1 at jmp,   cfa = SP - 24
+  };
+  return fres;
+}
+
+// SFrame fres to unwind the stack through a plt entry
+const ArrayRef<uint8_t> X86_64::pltSFrameFres() const {
+  // Offsets are are small and only track the cfa register
+  const uint8_t freInfo = (llvm::sframe::SFRAME_FRE_OFFSET_1B |
+                           llvm::sframe::SFRAME_BASE_REG_SP | (1 << 1));
+  // start_address, info, variable-number of offsets
+  static SmallVector<uint8_t> fres = {
+      0,  freInfo, 8, // fre0 at entry, cfa = SP - 8
+      11, freInfo, 16 // fre1 at jmpq,  cfa = SP - 16
+  };
+  return fres;
 }
 
 RelType X86_64::getDynRel(RelType type) const {

@@ -1509,7 +1509,8 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
       endian::read32<ELFT::Endianness>(&d[offsetof(sframe_header, sfh_freoff)]);
 
   // FREs come last, so this size check accounts for both FDEs and FREs.
-  if (d.size() < sizeof(sframe_header) + auxHdrLen + freOff + freSubSecLen) {
+  if (d.size() <
+      sizeof(sframe_header) + auxHdrLen + freOff + freSubSecLen) {
     Err(file->ctx) << "corrupted .sframe: section too small\n>>> defined in "
                    << getObjMsg(d.data() - content().data());
     return;
@@ -1519,8 +1520,8 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
   // the FRE subsection to its own FREs. Because of this, the two subsections
   // are best handled in parallel.
   fdes.reserve(numFdes);
-  size_t fdeOff = getFdeSubSectionOff();
-  size_t freSubSecOff = getFdeSubSectionOff() + freOff;
+  size_t fdeOff = getFdeSubSecOff();
+  size_t freSubSecOff = getFdeSubSecOff() + freOff;
   size_t fdeFreOff = 0;
   // fdes end where fres begin
   while (fdeOff < freSubSecOff) {
@@ -1572,8 +1573,9 @@ uint64_t SFrameInputSection::getParentOffset(uint64_t offset) const {
   assert(offset < fdes.front().freInputOff && "offset in the fres");
 
   uint64_t idx =
-      (offset - getFdeSubSectionOff()) % sizeof(sframe_func_desc_entry);
-  assert(fdes[idx].fdeOutputOff != 0 && "Cannot get an outputOff before combine");
+      (offset - getFdeSubSecOff()) % sizeof(sframe_func_desc_entry);
+  assert(fdes[idx].fdeOutputOff != 0 &&
+         "Cannot get an outputOff before combine");
   return fdes[idx].fdeOutputOff;
 }
 

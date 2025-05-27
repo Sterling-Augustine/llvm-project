@@ -417,7 +417,7 @@ struct SFrameSectionPiece {
 
   size_t fdeInputOff;
   size_t freInputOff;
-  size_t freSize = 0;
+  uint32_t freSize = 0;
   bool live = true;
   // The relocation mechanism needs to know this value for the pc relative
   // relocation.
@@ -442,7 +442,8 @@ public:
   // Most of the complexity in the sframe implementation stems from converting
   // between three kinds of offsets:
   //
-  // 1. Between sframe internal structures.
+  // 1. sframe uses offset between its own internal structures, each with a
+  //    different base.
   // 2. In input sections.
   // 3. In output sections.
   //
@@ -489,14 +490,14 @@ public:
   uint8_t raOff;
   bool preserveFp;
   // Count of the raw fre rows, which is required for the header
-  uint32_t numFres;
+  uint32_t numFres = 0;
 
   // Keep fdes indvidually, rather than as an entire input subsection. This
   // makes it possible to garbage collect fdes for discarded functions.
   SmallVector<SFrameSectionPiece> fdes;
 
   uint32_t freSubSecLen;
-  uint64_t getFdeSubSectionOff() const {
+  uint64_t getFdeSubSecOff() const {
     return sizeof(llvm::sframe::sframe_header) + auxHdrLen;
   }
   SyntheticSection *getParent() const;

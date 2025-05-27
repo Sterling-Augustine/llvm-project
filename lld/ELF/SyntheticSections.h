@@ -126,7 +126,16 @@ public:
   uint8_t fpOff = 0;
   uint8_t raOff = 0;
 
+  // Synthesize plt fdes when set
+  bool needPlt = false;
+
 private:
+  uint64_t fdeSubSecOff() {
+    return (*sections.begin())->getFdeSubSecOff();
+  }
+  uint64_t fdeSubSecLen() {
+    return numFdes * sizeof(llvm::sframe::sframe_func_desc_entry);
+  }
   uint64_t size = sizeof(llvm::sframe::sframe_header);
 
   template <class ELFT, class RelTy>
@@ -134,6 +143,7 @@ private:
   template <class ELFT> void addSectionAux(SFrameInputSection *s);
 
   Defined *isFdeLive(Symbol &sym);
+  void assignOutputLocations();
 
   uint32_t numFdes = 0;
   // The total number of individual fre rows. Needed for the header.
