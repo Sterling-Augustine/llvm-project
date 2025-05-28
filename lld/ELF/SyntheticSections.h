@@ -128,11 +128,11 @@ public:
   uint8_t fpOff = 0;
   uint8_t raOff = 0;
 
- private:
-   uint64_t fdeSubSecOff() { return (*sections.begin())->getFdeSubSecOff(); }
-   uint64_t fdeSubSecLen() {
-     return numFdes * sizeof(llvm::sframe::sframe_func_desc_entry);
-   }
+private:
+  uint64_t fdeSubSecOff() { return (*sections.begin())->getFdeSubSecOff(); }
+  uint64_t fdeSubSecLen() {
+    return numFdes * sizeof(llvm::sframe::sframe_func_desc_entry);
+  }
   uint64_t freSubSecOff() { return fdeSubSecOff() + fdeSubSecLen(); }
 
   template <class ELFT, class RelTy>

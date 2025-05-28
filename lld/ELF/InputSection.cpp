@@ -1548,7 +1548,7 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
   // the spec requires that, but gas and llvm generate them that way. Eventually
   // we should deduplicate these fres which would require a different method for
   // sizing them, as two fdes could refer to the same set of fres.
-  const uint8_t* lastFre = d.data() + size;
+  const uint8_t *lastFre = d.data() + size;
   std::for_each(fdes.rbegin(), fdes.rend(), [&lastFre](auto &fde) {
     assert(lastFre > fde.freBuf && "FREs out of expected order");
     fde.freSize = lastFre - fde.freBuf;

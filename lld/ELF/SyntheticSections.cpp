@@ -770,7 +770,7 @@ void SFrameSection::writeTo(uint8_t *buf) {
   write32(ctx, buf + offsetof(sframe_header, sfh_fre_len), freSubSecLen);
   write32(ctx, buf + offsetof(sframe_header, sfh_freoff), freSubSecOff());
 
-  using FdeVa = std::tuple<SFrameSectionPiece*, uint64_t>;
+  using FdeVa = std::tuple<SFrameSectionPiece *, uint64_t>;
   SmallVector<FdeVa> sortedFdes;
   sortedFdes.reserve(numFdes);
 
