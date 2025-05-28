@@ -120,31 +120,32 @@ public:
   }
 
   SmallVector<SFrameInputSection *, 0> sections;
-  // These must match for input section we combine. They are written to the
-  // header.
+
+  // These must match for input sections we combine. They are written to the
+  // header. TODO: SFRAME_F_FRAME_POINTER is similar, not an error. It can only
+  // be set if every input section has it set.
   uint8_t abiArch = 0;
   uint8_t fpOff = 0;
   uint8_t raOff = 0;
 
-  // Synthesize plt fdes when set
-  bool needPlt = false;
-
-private:
-  uint64_t fdeSubSecOff() {
-    return (*sections.begin())->getFdeSubSecOff();
-  }
-  uint64_t fdeSubSecLen() {
-    return numFdes * sizeof(llvm::sframe::sframe_func_desc_entry);
-  }
-  uint64_t size = sizeof(llvm::sframe::sframe_header);
+ private:
+   uint64_t fdeSubSecOff() { return (*sections.begin())->getFdeSubSecOff(); }
+   uint64_t fdeSubSecLen() {
+     return numFdes * sizeof(llvm::sframe::sframe_func_desc_entry);
+   }
+  uint64_t freSubSecOff() { return fdeSubSecOff() + fdeSubSecLen(); }
 
   template <class ELFT, class RelTy>
   void addRecords(SFrameInputSection *s, llvm::ArrayRef<RelTy> rels);
   template <class ELFT> void addSectionAux(SFrameInputSection *s);
 
   Defined *isFdeLive(Symbol &sym);
-  void assignOutputLocations();
+  void buildFde(uint8_t *buf, uint32_t funcSize, uint32_t numFres, uint8_t type,
+                uint8_t repSize);
 
+  uint64_t size = sizeof(llvm::sframe::sframe_header);
+  // Synthesize plt fdes when set
+  bool needPlt = false;
   uint32_t numFdes = 0;
   // The total number of individual fre rows. Needed for the header.
   uint32_t numFres = 0;

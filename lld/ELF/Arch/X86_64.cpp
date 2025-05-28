@@ -474,8 +474,8 @@ const ArrayRef<uint8_t> X86_64::pltHeaderSFrameFres() const {
                            llvm::sframe::SFRAME_BASE_REG_SP | (1 << 1));
   // start_address, info, variable-number of trailing offsets
   static SmallVector<uint8_t> fres = {
-    0, freInfo, 16, // fre0 at start, cfa = SP - 16
-    6, freInfo, 24  // fre1 at jmp,   cfa = SP - 24
+      0, freInfo, 16, // fre0 at start, cfa = SP - 16
+      6, freInfo, 24  // fre1 at jmp,   cfa = SP - 24
   };
   return fres;
 }

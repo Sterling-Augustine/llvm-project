@@ -412,18 +412,15 @@ public:
 
 // Class to keep track of an SFrame fde and its associated set of fres.
 struct SFrameSectionPiece {
-  SFrameSectionPiece(size_t fdeInputOff, size_t freInputOff)
-      : fdeInputOff(fdeInputOff), freInputOff(freInputOff) {};
+  SFrameSectionPiece(const uint8_t *fdeBuf, const uint8_t *freBuf,
+                     size_t freSize = 0)
+      : fdeBuf(fdeBuf), freBuf(freBuf),
+        freSize(static_cast<uint32_t>(freSize)) {};
 
-  size_t fdeInputOff;
-  size_t freInputOff;
-  uint32_t freSize = 0;
+  const uint8_t *fdeBuf;
+  const uint8_t *freBuf;
+  uint32_t freSize;
   bool live = true;
-  // The relocation mechanism needs to know this value for the pc relative
-  // relocation.
-  size_t fdeOutputOff = 0;
-  // freOutputOff is calculated while writing the output section, and nothing
-  // else needs it.
 };
 
 // This corresponds to an .sframe section of an input file.
@@ -468,26 +465,26 @@ public:
   // sfh_fre_off also marks the end of the FDE subsection, so is calculated
   // using the size of the FDE subsection.
   //
-  // The FRE subsection is a collection of many sframe_row_entries_addrx. These
-  // are variably sized. An FDE refers to a set of rows by their offset and a
-  // count. Most of this code treats this set as "an FRE", as each individual
-  // row is useful only within its group.
+  // The FRE subsection is a collection of many
+  // sframe_row_entries_addrx. Individual rows are variably sized. An FDE refers
+  // to a set of rows by their offset and a count. Most of this code treats an
+  // FDE's entire set set as "an FRE", as they are only useful as a set.
   //
-  // SFrameInputSections cannot be concatenated; The subsections must be
-  // combined. But because we want to garbage collect dead FDEs and their
-  // associated FREs, we can't concatenate the subsections either. This also
-  // complicates converting from an input section offset to an output section
-  // offset.
-  //
-  // Most fields in an sframe are 32-bits, so do most calculations in that
-  // width.
+  // SFrameInputSections cannot be concatenated; Ssections must be combined by
+  // creating a new header, appending the two subsections to each other and
+  // sorting. But because we want to garbage collect dead FDEs and their
+  // associated FREs, we can't just concatenate the subsections either. This
+  // also complicates converting from an input section offset to an output
+  // section offset.
 
   // Decoded from the sframe header. These must match for each input section we
-  // combine, except for numFres.
+  // combine.
   uint8_t abiArch;
   uint8_t auxHdrLen;
   uint8_t fpOff;
   uint8_t raOff;
+  // Also decoded from the header, if any input section has this false, the
+  // output header must also have it false.
   bool preserveFp;
   // Count of the raw fre rows, which is required for the header
   uint32_t numFres = 0;
@@ -501,7 +498,6 @@ public:
     return sizeof(llvm::sframe::sframe_header) + auxHdrLen;
   }
   SyntheticSection *getParent() const;
-  uint64_t getParentOffset(uint64_t offset) const;
 };
 
 // This is a section that is added directly to an output section instead of

@@ -1930,7 +1930,7 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
   }
 
   // Defer sframe-finalization until now to include unwind info for plt entries.
-  if (!ctx.arg.relocatable) {
+  {
     llvm::TimeTraceScope timeScope("Finalize .sframe");
     for (Partition &part : ctx.partitions)
       finalizeSynthetic(ctx, part.sFrame.get());

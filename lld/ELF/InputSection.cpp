@@ -1509,8 +1509,7 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
       endian::read32<ELFT::Endianness>(&d[offsetof(sframe_header, sfh_freoff)]);
 
   // FREs come last, so this size check accounts for both FDEs and FREs.
-  if (d.size() <
-      sizeof(sframe_header) + auxHdrLen + freOff + freSubSecLen) {
+  if (d.size() < sizeof(sframe_header) + auxHdrLen + freOff + freSubSecLen) {
     Err(file->ctx) << "corrupted .sframe: section too small\n>>> defined in "
                    << getObjMsg(d.data() - content().data());
     return;
@@ -1535,7 +1534,7 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
                      << getObjMsg(d.data() - content().data());
       return;
     }
-    fdes.emplace_back(fdeOff, freSubSecOff + fdeFreOff);
+    fdes.emplace_back(d.data() + fdeOff, d.data() + freSubSecOff + fdeFreOff);
     fdeOff += sizeof(sframe_func_desc_entry);
   }
   if (numFdes != fdes.size()) {
@@ -1549,34 +1548,16 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
   // the spec requires that, but gas and llvm generate them that way. Eventually
   // we should deduplicate these fres which would require a different method for
   // sizing them, as two fdes could refer to the same set of fres.
-  size_t lastFreOff = size;
-  std::for_each(fdes.rbegin(), fdes.rend(), [&lastFreOff](auto &fde) {
-    assert(lastFreOff > fde.freInputOff && "FREs out of expected order");
-    fde.freSize = lastFreOff - fde.freInputOff;
-    lastFreOff = fde.freInputOff;
+  const uint8_t* lastFre = d.data() + size;
+  std::for_each(fdes.rbegin(), fdes.rend(), [&lastFre](auto &fde) {
+    assert(lastFre > fde.freBuf && "FREs out of expected order");
+    fde.freSize = lastFre - fde.freBuf;
+    lastFre = fde.freBuf;
   });
 
   // An sframe section should have one relocation per fde. No more, no less.
   assert(fdes.size() == rels.size() &&
          "Unexpected number of relocations for sframe section.");
-}
-
-// Return the offset in an output section for a given input offset.
-// Only returns valid results after this section has been combined
-// into its parent.
-uint64_t SFrameInputSection::getParentOffset(uint64_t offset) const {
-  using llvm::sframe::sframe_func_desc_entry;
-  using llvm::sframe::sframe_header;
-  // This function is only used for relocations, which only are in the FDE
-  // subsection.
-  assert(offset >= fdes.front().fdeInputOff && "offset in the header");
-  assert(offset < fdes.front().freInputOff && "offset in the fres");
-
-  uint64_t idx =
-      (offset - getFdeSubSecOff()) % sizeof(sframe_func_desc_entry);
-  assert(fdes[idx].fdeOutputOff != 0 &&
-         "Cannot get an outputOff before combine");
-  return fdes[idx].fdeOutputOff;
 }
 
 // Split SHF_STRINGS section. Such section is a sequence of
