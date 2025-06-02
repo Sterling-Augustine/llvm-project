@@ -16,6 +16,7 @@
 #include "llvm-objdump.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/DebugInfo/DWARF/DWARFExpression.h"
+#include "llvm/DebugInfo/DWARF/DWARFExpressionPrinter.h"
 #include "llvm/Support/FormatVariadic.h"
 
 #define DEBUG_TYPE "objdump"
@@ -45,7 +46,7 @@ void LiveVariable::print(raw_ostream &OS, const MCRegisterInfo &MRI) const {
     return {};
   };
 
-  Expression.printCompact(OS, GetRegName);
+  DWARFExpressionPrinter::printCompact(&Expression, OS, GetRegName);
 }
 
 void LiveVariablePrinter::addVariable(DWARFDie FuncDie, DWARFDie VarDie) {
