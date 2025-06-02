@@ -816,9 +816,12 @@ removeTriviallyEmptyRange(IntrinsicInst &EndI, InstCombinerImpl &IC,
 }
 
 Instruction *InstCombinerImpl::visitVAEndInst(VAEndInst &I) {
-  removeTriviallyEmptyRange(I, *this, [](const IntrinsicInst &I) {
-    return I.getIntrinsicID() == Intrinsic::vastart ||
-           I.getIntrinsicID() == Intrinsic::vacopy;
+  removeTriviallyEmptyRange(I, *this, [&I](const IntrinsicInst &II) {
+    // Bail out on the case where the source va_list of a va_copy is destroyed
+    // immediately by a follow-up va_end.
+    return II.getIntrinsicID() == Intrinsic::vastart ||
+           (II.getIntrinsicID() == Intrinsic::vacopy &&
+            I.getArgOperand(0) != II.getArgOperand(1));
   });
   return nullptr;
 }
@@ -1396,9 +1399,8 @@ static Instruction *factorizeMinMaxTree(IntrinsicInst *II) {
 
 /// If all arguments of the intrinsic are unary shuffles with the same mask,
 /// try to shuffle after the intrinsic.
-static Instruction *
-foldShuffledIntrinsicOperands(IntrinsicInst *II,
-                              InstCombiner::BuilderTy &Builder) {
+Instruction *
+InstCombinerImpl::foldShuffledIntrinsicOperands(IntrinsicInst *II) {
   // TODO: This should be extended to handle other intrinsics like fshl, ctpop,
   //       etc. Use llvm::isTriviallyVectorizable() and related to determine
   //       which intrinsics are safe to shuffle?
@@ -1416,9 +1418,11 @@ foldShuffledIntrinsicOperands(IntrinsicInst *II,
   }
 
   Value *X;
+  Constant *C;
   ArrayRef<int> Mask;
-  if (!match(II->getArgOperand(0),
-             m_Shuffle(m_Value(X), m_Undef(), m_Mask(Mask))))
+  auto *NonConstArg = find_if_not(II->args(), IsaPred<Constant>);
+  if (!NonConstArg ||
+      !match(NonConstArg, m_Shuffle(m_Value(X), m_Poison(), m_Mask(Mask))))
     return nullptr;
 
   // At least 1 operand must have 1 use because we are creating 2 instructions.
@@ -1426,15 +1430,21 @@ foldShuffledIntrinsicOperands(IntrinsicInst *II,
     return nullptr;
 
   // See if all arguments are shuffled with the same mask.
-  SmallVector<Value *, 4> NewArgs(II->arg_size());
-  NewArgs[0] = X;
+  SmallVector<Value *, 4> NewArgs;
   Type *SrcTy = X->getType();
-  for (unsigned i = 1, e = II->arg_size(); i != e; ++i) {
-    if (!match(II->getArgOperand(i),
-               m_Shuffle(m_Value(X), m_Undef(), m_SpecificMask(Mask))) ||
-        X->getType() != SrcTy)
+  for (Value *Arg : II->args()) {
+    if (match(Arg, m_Shuffle(m_Value(X), m_Poison(), m_SpecificMask(Mask))) &&
+        X->getType() == SrcTy)
+      NewArgs.push_back(X);
+    else if (match(Arg, m_ImmConstant(C))) {
+      // If it's a constant, try find the constant that would be shuffled to C.
+      if (Constant *ShuffledC =
+              unshuffleConstant(Mask, C, cast<VectorType>(SrcTy)))
+        NewArgs.push_back(ShuffledC);
+      else
+        return nullptr;
+    } else
       return nullptr;
-    NewArgs[i] = X;
   }
 
   // intrinsic (shuf X, M), (shuf Y, M), ... --> shuf (intrinsic X, Y, ...), M
@@ -2298,6 +2308,18 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
               matchBSwapOrBitReverse(*II, /*MatchBSwaps*/ true,
                                      /*MatchBitReversals*/ true))
         return BitOp;
+    }
+
+    // fshl(X, X, Neg(Y)) --> fshr(X, X, Y)
+    // fshr(X, X, Neg(Y)) --> fshl(X, X, Y)
+    // if BitWidth is a power-of-2
+    Value *Y;
+    if (Op0 == Op1 && isPowerOf2_32(BitWidth) &&
+        match(II->getArgOperand(2), m_Neg(m_Value(Y)))) {
+      Module *Mod = II->getModule();
+      Function *OppositeShift = Intrinsic::getOrInsertDeclaration(
+          Mod, IID == Intrinsic::fshl ? Intrinsic::fshr : Intrinsic::fshl, Ty);
+      return CallInst::Create(OppositeShift, {Op0, Op1, Y});
     }
 
     // fshl(X, 0, Y) --> shl(X, and(Y, BitWidth - 1)) if bitwidth is a
@@ -3799,6 +3821,21 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
     }
     break;
   }
+  case Intrinsic::frexp: {
+    Value *X;
+    // The first result is idempotent with the added complication of the struct
+    // return, and the second result is zero because the value is already
+    // normalized.
+    if (match(II->getArgOperand(0), m_ExtractValue<0>(m_Value(X)))) {
+      if (match(X, m_Intrinsic<Intrinsic::frexp>(m_Value()))) {
+        X = Builder.CreateInsertValue(
+            X, Constant::getNullValue(II->getType()->getStructElementType(1)),
+            1);
+        return replaceInstUsesWith(*II, X);
+      }
+    }
+    break;
+  }
   default: {
     // Handle target specific intrinsics
     std::optional<Instruction *> V = targetInstCombineIntrinsic(*II);
@@ -3819,7 +3856,7 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
         if (Instruction *R = FoldOpIntoSelect(*II, Sel))
           return R;
 
-  if (Instruction *Shuf = foldShuffledIntrinsicOperands(II, Builder))
+  if (Instruction *Shuf = foldShuffledIntrinsicOperands(II))
     return Shuf;
 
   // Some intrinsics (like experimental_gc_statepoint) can be used in invoke
