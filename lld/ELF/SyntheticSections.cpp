@@ -809,21 +809,27 @@ void SFrameSection::writeTo(uint8_t *buf) {
 
   // In spite of using a pc-relative relocation, the value stored in
   // sfde_func_start_address is *not* a normal pc-relative value. Rather, it is
-  // the displacement from the start of the *.sframe section* to the target
+  // the displacement from the start of the .sframe section to the target
   // function. In other words:
   //
-  // Normal pcrel loc value: (section_addr + rel.offset - target_addr)
-  // sframe pcrel loc value: (section_addr - target_addr)
+  // Normal pcrel value: (section_addr + rel.offset - target_addr)
+  // sframe pcrel value: (section_addr - target_addr)
   //
-  // This means we can't use the normal relocation mechanism here.
+  // In both cases value is written to: (section_addr + rel.offset)
+  //
+  // If you find incorrect offsets in the output, which are wrong in increments
+  // like (28 + (20 * i)), then the above calculation is being done in the
+  // normal way, which is wrong for sframes.
+  //
+  // This means we can't use the normal relocation code here. Instead, do it by
+  // hand, and write it into the fde also by hand.  FIXME: This seems like it
+  // would be wrong for relocatable links. At the very least we should update
+  // the output relocations to target the proper offsets in the output sframe
+  // section.
   //
   // Symbols are assigned values relatively late (after relocation scanning), so
   // We have to wait for the relocation scanner to assign sections their
   // relocations.
-  //
-  // If you find offsets in the output off by (28 + (20 * i)), then the
-  // calculation is being done incorrectly. FIXME: This seems like it would be
-  // wrong for relocatable links.
   uint64_t secAddr = (*sections.begin())->getOutputSection()->addr;
   uint8_t *fdeOutBuf = buf + fdeSubSecOff();
   uint8_t *freOutBuf = buf + freSubSecOff();
