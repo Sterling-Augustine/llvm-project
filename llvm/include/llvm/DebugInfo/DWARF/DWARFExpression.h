@@ -9,8 +9,8 @@
 #ifndef LLVM_DEBUGINFO_DWARF_DWARFEXPRESSION_H
 #define LLVM_DEBUGINFO_DWARF_DWARFEXPRESSION_H
 
-// Forwarding header for the convenience of clients that do not need to distinguish
-// between low- and high-level Dwarf.
+// Forwarding header for the convenience of clients that do not need to
+// distinguish between low- and high-level Dwarf.
 
 #include "llvm/DebugInfo/DWARF/LowLevel/DWARFExpression.h"
 

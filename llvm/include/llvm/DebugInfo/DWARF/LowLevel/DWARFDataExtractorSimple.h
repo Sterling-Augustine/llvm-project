@@ -9,8 +9,8 @@
 // Non relocating, low-level dwarf-data extractor. Suitable for use from
 // libraries that cannot have build-time dependencies on relocation providers.
 
-#ifndef LLVM_DEBUGINFO_DWARF_DWARFDATAEXTRACTORSIMPLE_H
-#define LLVM_DEBUGINFO_DWARF_DWARFDATAEXTRACTORSIMPLE_H
+#ifndef LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFDATAEXTRACTORSIMPLE_H
+#define LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFDATAEXTRACTORSIMPLE_H
 
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/Support/DataExtractor.h"
@@ -85,4 +85,4 @@ public:
 
 } // end namespace llvm
 
-#endif // LLVM_DEBUGINFO_DWARF_DWARFDATAEXTRACTOR_H
+#endif // LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFDATAEXTRACTOR_H

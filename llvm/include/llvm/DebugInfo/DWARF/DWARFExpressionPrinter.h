@@ -1,4 +1,4 @@
-//===--- DWARFExpressionPrinter.h - DWARF Expression printing ----*- C++ -*-===//
+//===--- DWARFExpressionPrinter.h - DWARF Expression printing ----*- C++-*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -12,40 +12,40 @@
 // allows DWARFExpression to be used from code which can't have dependencies on
 // those higher-level structures.
 
-#ifndef LLVM_DEBUGINFO_DWARF_DWARFEXPRESSIONPRINTER_H
-#define LLVM_DEBUGINFO_DWARF_DWARFEXPRESSIONPRINTER_H
+#ifndef LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFEXPRESSIONPRINTER_H
+#define LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFEXPRESSIONPRINTER_H
 
 #include "llvm/DebugInfo/DWARF/LowLevel/DWARFExpression.h"
 
 #include <cstdint>
 
 namespace llvm {
-  class DWARFUnit;
-  struct DIDumpOptions;
-  class raw_ostream;
+struct DIDumpOptions;
+class raw_ostream;
+class DWARFUnit;
 
 class DWARFExpressionPrinter {
- public:
-   /// Print a Dwarf expression/
-   /// \param E to be printed
-   /// \param OS to this stream
-   /// \param GetNameForDWARFReg callback to return dwarf register name
-   static void print(const DWARFExpression *E, raw_ostream &OS,
-                     DIDumpOptions DumpOpts, DWARFUnit *U, bool IsEH = false);
+public:
+  /// Print a Dwarf expression/
+  /// \param E to be printed
+  /// \param OS to this stream
+  /// \param GetNameForDWARFReg callback to return dwarf register name
+  static void print(const DWARFExpression *E, raw_ostream &OS,
+                    DIDumpOptions DumpOpts, DWARFUnit *U, bool IsEH = false);
 
-   /// Print the expression in a format intended to be compact and useful to a
-   /// user, but not perfectly unambiguous, or capable of representing every
-   /// valid DWARF expression. Returns true if the expression was sucessfully
-   /// printed.
-   ///
-   /// \param E to be printed
-   /// \param OS to this stream
-   /// \param GetNameForDWARFReg callback to return dwarf register name
-   ///
-   /// \returns true if the expression was successfully printed
-   static bool printCompact(const DWARFExpression *E, raw_ostream &OS,
-                            std::function<StringRef(uint64_t RegNum, bool IsEH)>
-                                GetNameForDWARFReg = nullptr);
+  /// Print the expression in a format intended to be compact and useful to a
+  /// user, but not perfectly unambiguous, or capable of representing every
+  /// valid DWARF expression. Returns true if the expression was sucessfully
+  /// printed.
+  ///
+  /// \param E to be printed
+  /// \param OS to this stream
+  /// \param GetNameForDWARFReg callback to return dwarf register name
+  ///
+  /// \returns true if the expression was successfully printed
+  static bool printCompact(const DWARFExpression *E, raw_ostream &OS,
+                           std::function<StringRef(uint64_t RegNum, bool IsEH)>
+                               GetNameForDWARFReg = nullptr);
 
   /// Pretty print a register opcode and operands.
   /// \param U within the context of this Dwarf unit, if any.
@@ -56,20 +56,20 @@ class DWARFExpressionPrinter {
   ///
   /// returns true if the Op was successfully printed
   static bool prettyPrintRegisterOp(DWARFUnit *U, raw_ostream &OS,
-                                     DIDumpOptions DumpOpts, uint8_t Opcode,
-                                     ArrayRef<uint64_t> Operands);
+                                    DIDumpOptions DumpOpts, uint8_t Opcode,
+                                    ArrayRef<uint64_t> Operands);
 
- private:
-   static bool printOp(const DWARFExpression::Operation *Op, raw_ostream &OS,
-                       DIDumpOptions DumpOpts, const DWARFExpression *Expr,
-                       DWARFUnit *U);
+private:
+  static bool printOp(const DWARFExpression::Operation *Op, raw_ostream &OS,
+                      DIDumpOptions DumpOpts, const DWARFExpression *Expr,
+                      DWARFUnit *U);
 
-   static void prettyPrintBaseTypeRef(DWARFUnit *U, raw_ostream &OS,
-                                      DIDumpOptions DumpOpts,
-                                      ArrayRef<uint64_t> Operands,
-                                      unsigned Operand);
+  static void prettyPrintBaseTypeRef(DWARFUnit *U, raw_ostream &OS,
+                                     DIDumpOptions DumpOpts,
+                                     ArrayRef<uint64_t> Operands,
+                                     unsigned Operand);
 };
 
 } // end namespace llvm
 
-#endif // LLVM_DEBUGINFO_DWARF_DWARFEXPRESSIONPRINTER_H
+#endif // LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFEXPRESSIONPRINTER_H

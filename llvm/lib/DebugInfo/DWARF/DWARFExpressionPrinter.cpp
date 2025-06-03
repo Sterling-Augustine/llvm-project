@@ -123,7 +123,8 @@ bool DWARFExpressionPrinter::printOp(const DWARFExpression::Operation *Op,
       case 4:
         OS << format(" 0x%" PRIx64, Op->Operands[Operand]);
         break;
-      default: assert(false);
+      default:
+        assert(false);
       }
     } else if (Size == DWARFExpression::Operation::SizeBlock) {
       uint64_t Offset = Op->Operands[Operand];
@@ -303,6 +304,5 @@ bool DWARFExpressionPrinter::printCompact(
     std::function<StringRef(uint64_t RegNum, bool IsEH)> GetNameForDWARFReg) {
   return printCompactDWARFExpr(OS, E->begin(), E->end(), GetNameForDWARFReg);
 }
-
 
 } // namespace llvm

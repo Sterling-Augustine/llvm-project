@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/DebugInfo/DWARF/DWARFDataExtractorSimple.h"
+#include "llvm/DebugInfo/DWARF/LowLevel/DWARFDataExtractorSimple.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/MathExtras.h"
 

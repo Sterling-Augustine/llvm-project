@@ -6,14 +6,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_DEBUGINFO_DWARF_DWARFCFIPROGRAM_H
-#define LLVM_DEBUGINFO_DWARF_DWARFCFIPROGRAM_H
+#ifndef LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFCFIPROGRAM_H
+#define LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFCFIPROGRAM_H
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/iterator.h"
-#include "llvm/DebugInfo/DWARF/DWARFDataExtractor.h"
-#include "llvm/DebugInfo/DWARF/DWARFExpression.h"
+#include "llvm/DebugInfo/DWARF/LowLevel/DWARFDataExtractorSimple.h"
+#include "llvm/DebugInfo/DWARF/LowLevel/DWARFExpression.h"
 #include "llvm/Support/Error.h"
 #include "llvm/TargetParser/Triple.h"
 #include <map>
@@ -22,7 +22,12 @@
 
 namespace llvm {
 
+struct DIDumpOptions;
+
 namespace dwarf {
+
+class CFIProgramPrinter;
+
 /// Represent a sequence of Call Frame Information instructions that, when read
 /// in order, construct a table mapping PC to frame state. This can also be
 /// referred to as "CFI rules" in DWARF literature to avoid confusion with
@@ -76,10 +81,8 @@ public:
   /// starting at *Offset and ending at EndOffset. *Offset is updated
   /// to EndOffset upon successful parsing, or indicates the offset
   /// where a problem occurred in case an error is returned.
-  Error parse(DWARFDataExtractor Data, uint64_t *Offset, uint64_t EndOffset);
-
-  void dump(raw_ostream &OS, DIDumpOptions DumpOpts, unsigned IndentLevel,
-            std::optional<uint64_t> InitialLocation) const;
+  Error parse(DWARFDataExtractorSimple &Data, uint64_t *Offset,
+              uint64_t EndOffset);
 
   void addInstruction(const Instruction &I) { Instructions.push_back(I); }
 
@@ -87,6 +90,8 @@ public:
   StringRef callFrameString(unsigned Opcode) const;
 
 private:
+  friend class CFIProgramPrinter;
+
   std::vector<Instruction> Instructions;
   const uint64_t CodeAlignmentFactor;
   const int64_t DataAlignmentFactor;
@@ -155,4 +160,4 @@ private:
 
 } // end namespace llvm
 
-#endif // LLVM_DEBUGINFO_DWARF_DWARFCFIPROGRAM_H
+#endif // LLVM_DEBUGINFO_DWARF_LOWLEVEL_DWARFCFIPROGRAM_H
