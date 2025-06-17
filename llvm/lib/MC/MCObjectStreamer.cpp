@@ -148,7 +148,8 @@ void MCObjectStreamer::emitFrames(MCAsmBackend *MAB) {
 
   // Users can turn on sframes with either the .cfi_sections directive (plumbed
   // through emitCFISections), or by passing --gsframes on the command line.
-  if (EmitSFrame || getContext().getTargetOptions()->EmitSFrameUnwind)
+  if (EmitSFrame || (getContext().getTargetOptions() &&
+                     getContext().getTargetOptions()->EmitSFrameUnwind))
     MCSFrameEmitter::Emit(*this);
 }
 

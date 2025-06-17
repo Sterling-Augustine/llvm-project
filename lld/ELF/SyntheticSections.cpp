@@ -740,8 +740,6 @@ void SFrameSection::finalizeContents() {
   size = fdeSubSecOff() + fdeSubSecLen() + freSubSecLen;
 }
 
-// ctx.target->pltHeaderSize
-
 // Fill in the data that doesn't depend on output position or fre position. For
 // non-synthetic Fdes, this is copied from an input section.
 void SFrameSection::buildFde(uint8_t *buf, uint32_t funcSize, uint32_t numFres,
@@ -760,6 +758,7 @@ void SFrameSection::writeTo(uint8_t *buf) {
   using llvm::sframe::sframe_func_desc_entry;
   using llvm::sframe::sframe_header;
   using llvm::sframe::sframe_preamble;
+
   // Write the common parts of the header by copying from an input
   // section. We checked for compatibility earlier.
   memcpy(buf, (*sections.begin())->content().data(), sizeof(sframe_header));
@@ -822,10 +821,7 @@ void SFrameSection::writeTo(uint8_t *buf) {
   // normal way, which is wrong for sframes.
   //
   // This means we can't use the normal relocation code here. Instead, do it by
-  // hand, and write it into the fde also by hand.  FIXME: This seems like it
-  // would be wrong for relocatable links. At the very least we should update
-  // the output relocations to target the proper offsets in the output sframe
-  // section.
+  // hand, and write it into the fde also by hand.
   //
   // Symbols are assigned values relatively late (after relocation scanning), so
   // We have to wait for the relocation scanner to assign sections their
