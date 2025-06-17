@@ -1753,8 +1753,9 @@ template <class ELFT> void elf::scanSFrameRelocations(Ctx &ctx) {
   auto scanSFrame = [&] {
     RelocationScanner scanner(ctx);
     for (Partition &part : ctx.partitions) {
-      for (SFrameInputSection *sec : part.sFrame->sections)
-        scanner.template scanSection<ELFT>(*sec, /*isEH=*/false);
+      if (part.sFrame)
+        for (SFrameInputSection *sec : part.sFrame->sections)
+          scanner.template scanSection<ELFT>(*sec, /*isEH=*/false);
     }
   };
   parallel::TaskGroup tg;
