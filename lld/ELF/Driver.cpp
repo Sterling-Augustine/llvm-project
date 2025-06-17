@@ -3208,7 +3208,7 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
           continue;
         if (LLVM_UNLIKELY(isa<EhInputSection>(s)))
           ctx.ehInputSections.push_back(cast<EhInputSection>(s));
-        if (LLVM_UNLIKELY(isa<SFrameInputSection>(s)))
+        else if (LLVM_UNLIKELY(isa<SFrameInputSection>(s)))
           ctx.sFrameInputSections.push_back(cast<SFrameInputSection>(s));
         else
           ctx.inputSections.push_back(s);
