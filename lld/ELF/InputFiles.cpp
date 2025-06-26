@@ -1117,9 +1117,8 @@ InputSectionBase *ObjFile<ELFT>::createInputSection(uint32_t idx,
 
   // The linker merges data from input .sframe sections by combining and sorting
   // FDEs and FREs separately, as well as creating an sframe segment. So we
-  // handle them with a special class. TODO: is just passing them through for
-  // relocatable outputs, the right thing.
-  if (name == ".sframe" && !ctx.arg.relocatable)
+  // handle them with a special class.
+  if (name == ".sframe")
     return makeThreadLocal<SFrameInputSection>(*this, sec, name);
 
   if ((sec.sh_flags & SHF_MERGE) && shouldMerge(sec, name))

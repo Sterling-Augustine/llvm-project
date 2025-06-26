@@ -221,7 +221,8 @@ uint64_t SectionBase::getOffset(uint64_t offset) const {
     return offset;
   }
   case SFrame: {
-    llvm_unreachable("Fixme sframe getoffset");
+    const SFrameInputSection *sf = cast<SFrameInputSection>(this);
+    return offset + sf->outSecOff;
   }
   case Merge:
     const MergeInputSection *ms = cast<MergeInputSection>(this);

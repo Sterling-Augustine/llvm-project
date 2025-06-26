@@ -4275,7 +4275,19 @@ void elf::combineEhSections(Ctx &ctx) {
 
 void elf::combineSFrameSections(Ctx &ctx) {
   llvm::TimeTraceScope timeScope("Combine SFrame sections");
+  uint64_t outSecOff = 0;
   for (SFrameInputSection *sec : ctx.sFrameInputSections) {
+    // offsets are used in copyRelocations for relocatable links (final links
+    // resolve relocations by hand). SFrames sections aren't directly appended
+    // to each other. Rather, input sections have their header discarded, and
+    // the FDE subsections are appended after a new single header. Therefore do
+    // a little math to make the relocations point to the proper place. The
+    // first section's offsets don't need any adjustment, but subsequent ones
+    // won't have the header, and will come after previous fde subsections.
+    //sec->outSecOff = outSecOff;
+    if (outSecOff == 0)
+      outSecOff += sec->getFdeSubSecOff();
+    outSecOff += sec->fdes.size() * sizeof(sframe::sframe_func_desc_entry);
     SFrameSection &sf = *sec->getPartition(ctx).sFrame;
     // TODO: These should be errors instead of assertions.
     assert(sf.abiArch == 0 || (sf.abiArch == sec->abiArch));
@@ -5030,6 +5042,9 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
     part.dynSymTab =
         std::make_unique<SymbolTableSection<ELFT>>(ctx, *part.dynStrTab);
 
+    part.sFrame = std::make_unique<SFrameSection>(ctx);
+    add(*part.sFrame);
+
     if (ctx.arg.relocatable)
       continue;
     part.dynamic = std::make_unique<DynamicSection<ELFT>>(ctx);
@@ -5094,9 +5109,6 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
     }
     part.ehFrame = std::make_unique<EhFrameSection>(ctx);
     add(*part.ehFrame);
-
-    part.sFrame = std::make_unique<SFrameSection>(ctx);
-    add(*part.sFrame);
 
     if (ctx.arg.emachine == EM_ARM) {
       // This section replaces all the individual .ARM.exidx InputSections.
