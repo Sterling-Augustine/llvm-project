@@ -101,92 +101,93 @@ public:
   void relocateNoSym(uint8_t *loc, RelType type, uint64_t val) const {
     relocate(loc, Relocation{R_NONE, type, 0, 0, nullptr}, val);
   }
-    virtual void relocateAlloc(InputSectionBase & sec, uint8_t *buf) const;
+  virtual void relocateAlloc(InputSectionBase &sec, uint8_t *buf) const;
 
-    // Do a linker relaxation pass and return true if we changed something.
-    virtual bool relaxOnce(int pass) const { return false; }
-    // Do finalize relaxation after collecting relaxation infos.
-    virtual void finalizeRelax(int passes) const {}
+  // Do a linker relaxation pass and return true if we changed something.
+  virtual bool relaxOnce(int pass) const { return false; }
+  // Do finalize relaxation after collecting relaxation infos.
+  virtual void finalizeRelax(int passes) const {}
 
-    virtual void applyJumpInstrMod(uint8_t *loc, JumpModType type,
-                                   JumpModType val) const {}
+  virtual void applyJumpInstrMod(uint8_t *loc, JumpModType type,
+                                 JumpModType val) const {}
+  virtual void applyBranchToBranchOpt() const {}
 
-    virtual ~TargetInfo();
+  virtual ~TargetInfo();
 
-    // This deletes a jump insn at the end of the section if it is a fall thru
-    // to the next section.  Further, if there is a conditional jump and a
-    // direct jump consecutively, it tries to flip the conditional jump to
-    // convert the direct jump into a fall thru and delete it.  Returns true if
-    // a jump instruction can be deleted.
-    virtual bool deleteFallThruJmpInsn(InputSection & is, InputFile * file,
-                                       InputSection * nextIS) const {
-      return false;
-    }
+  // This deletes a jump insn at the end of the section if it is a fall thru
+  // to the next section.  Further, if there is a conditional jump and a
+  // direct jump consecutively, it tries to flip the conditional jump to
+  // convert the direct jump into a fall thru and delete it.  Returns true if
+  // a jump instruction can be deleted.
+  virtual bool deleteFallThruJmpInsn(InputSection &is, InputFile *file,
+                                     InputSection *nextIS) const {
+    return false;
+  }
 
-    Ctx & ctx;
-    unsigned defaultCommonPageSize = 4096;
-    unsigned defaultMaxPageSize = 4096;
+  Ctx &ctx;
+  unsigned defaultCommonPageSize = 4096;
+  unsigned defaultMaxPageSize = 4096;
 
-    uint64_t getImageBase() const;
+  uint64_t getImageBase() const;
 
-    // True if _GLOBAL_OFFSET_TABLE_ is relative to .got.plt, false if .got.
-    bool gotBaseSymInGotPlt = false;
+  // True if _GLOBAL_OFFSET_TABLE_ is relative to .got.plt, false if .got.
+  bool gotBaseSymInGotPlt = false;
 
-    static constexpr RelType noneRel = 0;
-    RelType copyRel = 0;
-    RelType gotRel = 0;
-    RelType pltRel = 0;
-    RelType relativeRel = 0;
-    RelType iRelativeRel = 0;
-    RelType symbolicRel = 0;
-    RelType tlsDescRel = 0;
-    RelType tlsGotRel = 0;
-    RelType tlsModuleIndexRel = 0;
-    RelType tlsOffsetRel = 0;
-    unsigned gotEntrySize = ctx.arg.wordsize;
-    unsigned pltEntrySize = 0;
-    unsigned pltHeaderSize = 0;
-    unsigned ipltEntrySize = 0;
+  static constexpr RelType noneRel = 0;
+  RelType copyRel = 0;
+  RelType gotRel = 0;
+  RelType pltRel = 0;
+  RelType relativeRel = 0;
+  RelType iRelativeRel = 0;
+  RelType symbolicRel = 0;
+  RelType tlsDescRel = 0;
+  RelType tlsGotRel = 0;
+  RelType tlsModuleIndexRel = 0;
+  RelType tlsOffsetRel = 0;
+  unsigned gotEntrySize = ctx.arg.wordsize;
+  unsigned pltEntrySize = 0;
+  unsigned pltHeaderSize = 0;
+  unsigned ipltEntrySize = 0;
 
-    // At least on x86_64 positions 1 and 2 are used by the first plt entry
-    // to support lazy loading.
-    unsigned gotPltHeaderEntriesNum = 3;
+  // At least on x86_64 positions 1 and 2 are used by the first plt entry
+  // to support lazy loading.
+  unsigned gotPltHeaderEntriesNum = 3;
 
-    // On PPC ELF V2 abi, the first entry in the .got is the .TOC.
-    unsigned gotHeaderEntriesNum = 0;
+  // On PPC ELF V2 abi, the first entry in the .got is the .TOC.
+  unsigned gotHeaderEntriesNum = 0;
 
-    // On PPC ELF V2 abi, the dynamic section needs DT_PPC64_OPT (DT_LOPROC + 3)
-    // to be set to 0x2 if there can be multiple TOC's. Although we do not emit
-    // multiple TOC's, there can be a mix of TOC and NOTOC addressing which
-    // is functionally equivalent.
-    int ppc64DynamicSectionOpt = 0;
+  // On PPC ELF V2 abi, the dynamic section needs DT_PPC64_OPT (DT_LOPROC + 3)
+  // to be set to 0x2 if there can be multiple TOC's. Although we do not emit
+  // multiple TOC's, there can be a mix of TOC and NOTOC addressing which
+  // is functionally equivalent.
+  int ppc64DynamicSectionOpt = 0;
 
-    bool needsThunks = false;
+  bool needsThunks = false;
 
-    // A 4-byte field corresponding to one or more trap instructions, used to
-    // pad executable OutputSections.
-    std::array<uint8_t, 4> trapInstr = {};
+  // A 4-byte field corresponding to one or more trap instructions, used to
+  // pad executable OutputSections.
+  std::array<uint8_t, 4> trapInstr = {};
 
-    // Stores the NOP instructions of different sizes for the target and is used
-    // to pad sections that are relaxed.
-    std::optional<std::vector<std::vector<uint8_t>>> nopInstrs;
+  // Stores the NOP instructions of different sizes for the target and is used
+  // to pad sections that are relaxed.
+  std::optional<std::vector<std::vector<uint8_t>>> nopInstrs;
 
-    // If a target needs to rewrite calls to __morestack to instead call
-    // __morestack_non_split when a split-stack enabled caller calls a
-    // non-split-stack callee this will return true. Otherwise returns false.
-    bool needsMoreStackNonSplit = true;
+  // If a target needs to rewrite calls to __morestack to instead call
+  // __morestack_non_split when a split-stack enabled caller calls a
+  // non-split-stack callee this will return true. Otherwise returns false.
+  bool needsMoreStackNonSplit = true;
 
-    virtual RelExpr adjustTlsExpr(RelType type, RelExpr expr) const;
-    virtual RelExpr adjustGotPcExpr(RelType type, int64_t addend,
-                                    const uint8_t *loc) const;
+  virtual RelExpr adjustTlsExpr(RelType type, RelExpr expr) const;
+  virtual RelExpr adjustGotPcExpr(RelType type, int64_t addend,
+                                  const uint8_t *loc) const;
 
-  protected:
-    // On FreeBSD x86_64 the first page cannot be mmaped.
-    // On Linux this is controlled by vm.mmap_min_addr. At least on some x86_64
-    // installs this is set to 65536, so the first 15 pages cannot be used.
-    // Given that, the smallest value that can be used in here is 0x10000.
-    uint64_t defaultImageBase = 0x10000;
-  };
+protected:
+  // On FreeBSD x86_64 the first page cannot be mmaped.
+  // On Linux this is controlled by vm.mmap_min_addr. At least on some x86_64
+  // installs this is set to 65536, so the first 15 pages cannot be used.
+  // Given that, the smallest value that can be used in here is 0x10000.
+  uint64_t defaultImageBase = 0x10000;
+};
 
 void setAArch64TargetInfo(Ctx &);
 void setAMDGPUTargetInfo(Ctx &);
