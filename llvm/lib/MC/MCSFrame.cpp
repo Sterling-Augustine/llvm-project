@@ -11,8 +11,8 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/BinaryFormat/SFrame.h"
-#include "llvm/DebugInfo/DWARF/DWARFDataExtractor.h"
-#include "llvm/DebugInfo/DWARF/DWARFDebugFrame.h"
+#include "llvm/DebugInfo/DWARF/LowLevel/DWARFCFIProgram.h"
+#include "llvm/DebugInfo/DWARF/LowLevel/DWARFDataExtractorSimple.h"
 #include "llvm/MC/MCAsmBackend.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -83,8 +83,8 @@ struct SFrameFRE {
     // sframe_fre_info_word
     S.emitInt8(Info);
 
-    unsigned OffsetsEmitted = 1;
     // FRE Offsets
+    [[maybe_unused]] unsigned OffsetsEmitted = 1;
     switch (OffsetSize) {
     case (SFRAME_FRE_OFFSET_1B):
       S.emitInt8(CfaOffset);
@@ -241,8 +241,8 @@ class SFrameEmitterImpl {
   // code, but it handles the most important ones compatibly with gas.
   bool IsCFIEscapeSafe(SFrameFDE &FDE, const MCCFIInstruction &CFI) {
     const MCAsmInfo *AI = Streamer.getContext().getAsmInfo();
-    DWARFDataExtractor data(CFI.getValues(), AI->isLittleEndian(),
-                            AI->getCodePointerSize());
+    DWARFDataExtractorSimple data(CFI.getValues(), AI->isLittleEndian(),
+                                  AI->getCodePointerSize());
 
     // Normally, both alignment factors are extracted from the enclosing Dwarf
     // FDE or CIE. We don't have one here. Alignments are used for scaling

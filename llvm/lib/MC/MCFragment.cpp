@@ -189,7 +189,8 @@ LLVM_DUMP_METHOD void MCFragment::dump() const {
   case MCFragment::FT_SFrame: {
     const auto *SF = cast<MCSFrameFragment>(this);
     OS << "\n       ";
-    OS << " AddrDelta:" << SF->getAddrDelta();
+    OS << " AddrDelta:";
+    SF->getAddrDelta().print(OS, nullptr);
     break;
   }
   case MCFragment::FT_LEB: {
