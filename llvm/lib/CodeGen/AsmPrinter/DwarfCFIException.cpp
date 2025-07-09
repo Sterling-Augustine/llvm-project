@@ -97,6 +97,7 @@ void DwarfCFIException::beginFunction(const MachineFunction *MF) {
         MAI.usesCFIForEH() && (shouldEmitPersonality || shouldEmitMoves);
   else
     shouldEmitCFI = Asm->usesCFIWithoutEH() && shouldEmitMoves;
+  shouldEmitCFI |= Asm->TM.Options.MCOptions.EmitSFrameUnwind;
 }
 
 void DwarfCFIException::beginBasicBlockSection(const MachineBasicBlock &MBB) {

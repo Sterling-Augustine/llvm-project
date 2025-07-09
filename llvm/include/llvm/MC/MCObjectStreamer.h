@@ -98,7 +98,12 @@ public:
   /// if the Subtarget differs from the current fragment.
   MCDataFragment *getOrCreateDataFragment(const MCSubtargetInfo* STI = nullptr);
 
-protected:
+  /// Add a fixup \p F for symbol \p S, which was forward declared.
+  void addPendingFixup(MCSymbol *S, MCDataFragment *DF, MCFixup &F) {
+    PendingFixups.emplace_back(S, DF, F);
+  }
+
+ protected:
   bool changeSectionImpl(MCSection *Section, uint32_t Subsection);
 
 public:

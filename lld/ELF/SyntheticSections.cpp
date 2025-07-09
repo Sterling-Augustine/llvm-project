@@ -807,6 +807,14 @@ void SFrameSection::writeTo(uint8_t *buf) {
         {&pltSp, ctx.in.plt->getParent()->getLMA() + ctx.in.plt->headerSize});
   }
   for (SFrameInputSection *sec : sections) {
+    size_t off = 28;
+    for (const auto &rel : sec->relocations) {
+      while (rel.offset != off && off < 10000) {
+        Warn(ctx) << "expected rel at " << off << " Next at " << rel.offset;
+        off += 20;
+      }
+      off += 20;
+    }
     for (const auto &[fde, rel] : zip_equal(sec->fdes, sec->relocations)) {
       if (fde.live)
         sortedFdes.push_back({&fde, rel.sym->getVA(ctx) + rel.addend});

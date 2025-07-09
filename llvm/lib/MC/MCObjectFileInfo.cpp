@@ -1067,6 +1067,7 @@ void MCObjectFileInfo::initMCObjectFileInfo(MCContext &MCCtx, bool PIC,
   CompactUnwindDwarfEHFrameOnly = 0;
 
   EHFrameSection = nullptr;             // Created on demand.
+  SFrameSection = nullptr;              // Created on demand.
   CompactUnwindSection = nullptr;       // Used only by selected targets.
   DwarfAccelNamesSection = nullptr;     // Used only by selected targets.
   DwarfAccelObjCSection = nullptr;      // Used only by selected targets.

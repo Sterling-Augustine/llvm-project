@@ -219,8 +219,8 @@ uint64_t SectionBase::getOffset(uint64_t offset) const {
     return offset;
   }
   case SFrame: {
-    const SFrameInputSection *sf = cast<SFrameInputSection>(this);
-    return offset + sf->outSecOff;
+    //    const SFrameInputSection *sf = cast<SFrameInputSection>(this);
+    return offset;// + sf->outSecOff;
   }
   case Merge:
     const MergeInputSection *ms = cast<MergeInputSection>(this);
@@ -1530,7 +1530,7 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
     if (fdeFreOff > freSubSecLen) {
       Err(file->ctx) << "corrupted .sframe: section fre-offset "
                      << Twine(fdeFreOff) << " out of range ("
-                     << freOff + freSubSecLen << ")\n>>> defined in "
+                     << Twine(freSubSecLen) << ")\n>>> defined in "
                      << getObjMsg(d.data() - content().data());
       return;
     }
@@ -1548,9 +1548,13 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
   // the spec requires that, but gas and llvm generate them that way. Eventually
   // we should deduplicate these fres which would require a different method for
   // sizing them, as two fdes could refer to the same set of fres.
-  const uint8_t *lastFre = d.data() + size;
-  std::for_each(fdes.rbegin(), fdes.rend(), [&lastFre](auto &fde) {
-    assert(lastFre > fde.freBuf && "FREs out of expected order");
+  const uint8_t *lastFre = d.data() + d.size();
+  std::for_each(fdes.rbegin(), fdes.rend(), [&lastFre, this, d](auto &fde) {
+    //assert(lastFre > fde.freBuf && "FREs out of expected order");
+    if (lastFre <= fde.freBuf) {
+      Err(file->ctx) << getObjMsg(d.data() - content().data());
+      assert(lastFre > fde.freBuf && "FREs out of expected order");
+    }
     fde.freSize = lastFre - fde.freBuf;
     lastFre = fde.freBuf;
   });

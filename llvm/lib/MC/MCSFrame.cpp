@@ -144,7 +144,7 @@ struct SFrameFDE {
   SFrameFDE(const MCDwarfFrameInfo &DF, MCSymbol *FRES)
       : DFrame(DF), FREStart(FRES), Invalid(false), FDEFrag(nullptr) {}
 
-  void Emit(MCObjectStreamer &S, MCSymbol *FRESubSectionStart) {
+  void Emit(MCObjectStreamer &S, const MCSymbol* FRESubSectionStart) {
     MCContext &C = S.getContext();
 
     // sfde_func_start_address
@@ -157,9 +157,17 @@ struct SFrameFDE {
     S.emitAbsoluteSymbolDiff(DFrame.End, DFrame.Begin, sizeof(uint32_t));
 
     // sfde_func_start_fre_off
-    // The gnu assembler always emits zero here. Match that behavior for easier
-    // comparisons. The linker needs to update this field anyway.
-    // S.emitAbsoluteSymbolDiff(FREStart, FRESubSectionStart, sizeof(uint32_t));
+
+    // emitAbsoluteSymbolDiff doesn't work well with symbols in different
+    // fragments, and we don't know the size of previous fde's FREs until after
+    // relaxation. So this value will be filled-in during relaxation.
+    auto *DF = S.getOrCreateDataFragment();
+    const MCExpr *Diff =
+        MCBinaryExpr::createSub(MCSymbolRefExpr::create(FREStart, C),
+                                MCSymbolRefExpr::create(FRESubSectionStart, C), C);
+
+    DF->addFixup(MCFixup::create(DF->getContents().size(), Diff,
+                                 MCFixup::getDataKindForSize(4)));
     S.emitInt32(0);
 
     // sfde_func_start_num_fres
@@ -167,7 +175,7 @@ struct SFrameFDE {
 
     // sfde_func_info word
 
-    // All FREs within and FDE share the same SFRAME_FRE_TYPE_ADDRX, determined
+    // All FREs within an FDE share the same SFRAME_FRE_TYPE_ADDRX, determined
     // by the FRE with the largest offset, which is the last. This offset isn't
     // known until relax time, so emit a frag which can calculate that now. Keep
     // a pointer to it so the FREs can use the value it calculates during
@@ -439,164 +447,159 @@ class SFrameEmitterImpl {
     }
   }
 
-    public:
-      SFrameEmitterImpl(MCObjectStreamer & Streamer) : Streamer(Streamer) {
-        FDEs.reserve(Streamer.getDwarfFrameInfos().size());
-        SFrameABI =
-            Streamer.getContext().getObjectFileInfo()->getSFrameABIArch();
+public:
+  SFrameEmitterImpl(MCObjectStreamer &Streamer) : Streamer(Streamer) {
+    FDEs.reserve(Streamer.getDwarfFrameInfos().size());
+    SFrameABI = Streamer.getContext().getObjectFileInfo()->getSFrameABIArch();
 
-        switch (SFrameABI) {
-        case SFRAME_ABI_AARCH64_ENDIAN_BIG:
-        case SFRAME_ABI_AARCH64_ENDIAN_LITTLE:
-          SPReg = 31;
-          RAReg = 29;
-          FPReg = 30;
-          break;
-        case SFRAME_ABI_AMD64_ENDIAN_LITTLE:
-          SPReg = 7;
-          // Untracked in this abi. Value chosen to match MCDwarfFrameInfo
-          // constructor.
-          RAReg = static_cast<unsigned>(INT_MAX);
-          FPReg = 6;
-          break;
-        }
-        FDESubSectionStart = Streamer.getContext().createTempSymbol();
-        FRESubSectionStart = Streamer.getContext().createTempSymbol();
-        FRESubSectionEnd = Streamer.getContext().createTempSymbol();
+    switch (SFrameABI) {
+    case SFRAME_ABI_AARCH64_ENDIAN_BIG:
+    case SFRAME_ABI_AARCH64_ENDIAN_LITTLE:
+      SPReg = 31;
+      RAReg = 29;
+      FPReg = 30;
+      break;
+    case SFRAME_ABI_AMD64_ENDIAN_LITTLE:
+      SPReg = 7;
+      // Untracked in this abi. Value chosen to match MCDwarfFrameInfo
+      // constructor.
+      RAReg = static_cast<unsigned>(INT_MAX);
+      FPReg = 6;
+      break;
+    }
+    FDESubSectionStart = Streamer.getContext().createTempSymbol();
+    FRESubSectionStart = Streamer.getContext().createTempSymbol();
+    FRESubSectionEnd = Streamer.getContext().createTempSymbol();
+  }
+
+  bool AtSameLocation(const MCSymbol *Left, const MCSymbol *Right) {
+    return Left != nullptr && Right != nullptr &&
+           Left->getFragment() == Right->getFragment() &&
+           Left->getOffset() == Right->getOffset();
+  }
+
+  bool EqualIgnoringLocation(const SFrameFRE &Left, const SFrameFRE &Right) {
+    return Left.CfaOffset == Right.CfaOffset &&
+           Left.FPOffset == Right.FPOffset && Left.RAOffset == Right.RAOffset &&
+           Left.FromFP == Right.FromFP && Left.CfaRegSet == Right.CfaRegSet;
+  }
+
+  void BuildSFDE(const MCDwarfFrameInfo &DF) {
+    auto &FDE = FDEs.emplace_back(DF, Streamer.getContext().createTempSymbol());
+    // This would have been set via ".cfi_return_column", but
+    // MCObjectStreamer doesn't emit an MCCFIInstruction for that. It just
+    // sets the DF.RAReg.
+    // FIXME: This also prevents providing a proper location for the error.
+    // LLVM doesn't change the return column itself, so this was
+    // externally-generated assembly.
+    if (DF.RAReg != RAReg) {
+      Streamer.getContext().reportWarning(
+          SMLoc(),
+          "skipping SFrame FDE; non-default RA register " + Twine(DF.RAReg));
+      // Continue with the FDE to find any addtional errors. Discard it at
+      // the end.
+      FDE.Invalid = true;
+    }
+    MCSymbol *BaseLabel = DF.Begin;
+    SFrameFRE BaseFRE(BaseLabel);
+    if (!DF.IsSimple) {
+      for (const auto &CFI :
+           Streamer.getContext().getAsmInfo()->getInitialFrameState())
+        HandleCFI(FDE, BaseFRE, CFI);
+    }
+    FDE.FREs.push_back(BaseFRE);
+
+    for (const auto &CFI : DF.Instructions) {
+      // Instructions from InitialFrameState may not have a label, but if
+      // these instructions don't, then they are in dead code or otherwise
+      // unused.
+      auto *L = CFI.getLabel();
+      if (L && !L->isDefined())
+        continue;
+
+      SFrameFRE FRE = FDE.FREs.back();
+      HandleCFI(FDE, FRE, CFI);
+
+      // If nothing relevant but the location changed, don't add the FRE.
+      if (EqualIgnoringLocation(FRE, FDE.FREs.back()))
+        continue;
+
+      // If the location stayed the same, then update the current
+      // row. Otherwise, add a new one.
+      if (AtSameLocation(BaseLabel, L))
+        FDE.FREs.back() = FRE;
+      else {
+        FDE.FREs.push_back(FRE);
+        FDE.FREs.back().Label = L;
+        BaseLabel = L;
       }
+    }
+    if (FDE.Invalid)
+      FDEs.pop_back();
+  }
 
-      bool AtSameLocation(const MCSymbol *Left, const MCSymbol *Right) {
-        return Left != nullptr && Right != nullptr &&
-               Left->getFragment() == Right->getFragment() &&
-               Left->getOffset() == Right->getOffset();
+  void EmitPreamble() {
+    Streamer.emitInt16(SFRAME_MAGIC);
+    Streamer.emitInt8(SFRAME_VERSION_2);
+    uint8_t flags = 0;
+    // Do not set SFRAME_F_FDE_SORTED. Sorting is up to the linker.
+    // if (-fno-omit-frame-pointer)
+    //   flags |= FRAME_F_FRAME_POINTER
+    Streamer.emitInt8(flags);
+  }
+
+  void EmitHeader() {
+    EmitPreamble();
+    // sfh_abi_arch
+    Streamer.emitInt8(SFrameABI);
+    // sfh_cfa_fixed_fp_offset
+    Streamer.emitInt8(0);
+    // sfh_cfa_fixed_ra_offset
+    int8_t FRAO = 0;
+    if (SFrameABI == SFRAME_ABI_AMD64_ENDIAN_LITTLE) {
+      FRAO = -8; // As specified by the AMD64 abi
+    }
+    Streamer.emitInt8(FRAO);
+    // sfh_auxhdr_len
+    Streamer.emitInt8(0);
+
+    // shf_num_fdes
+    Streamer.emitInt32(FDEs.size());
+
+    // shf_num_fres
+    uint32_t TotalFREs = 0;
+    for (auto &FDE : FDEs)
+      TotalFREs += FDE.FREs.size();
+    Streamer.emitInt32(TotalFREs);
+
+    // shf_fre_len
+    Streamer.emitAbsoluteSymbolDiff(FRESubSectionEnd, FRESubSectionStart,
+                                    sizeof(int32_t));
+    // shf_fdeoff. With no sfh_auxhdr, these immediately follow this header.
+    Streamer.emitInt32(0);
+    // shf_freoff
+    Streamer.emitAbsoluteSymbolDiff(FRESubSectionStart, FDESubSectionStart,
+                                    sizeof(uint32_t));
+  }
+
+  void EmitFDEs() {
+    Streamer.emitLabel(FDESubSectionStart);
+    for (auto &FDE : FDEs) {
+      FDE.Emit(Streamer, FRESubSectionStart);
+    }
+  }
+
+  void EmitFREs() {
+    Streamer.emitLabel(FRESubSectionStart);
+    for (auto FDE : FDEs) {
+      Streamer.emitLabel(FDE.FREStart);
+      for (auto &FRE : FDE.FREs) {
+        FRE.Emit(Streamer, FDE.DFrame.Begin, FDE.FDEFrag);
       }
-
-      bool EqualIgnoringLocation(const SFrameFRE &Left,
-                                 const SFrameFRE &Right) {
-        return Left.CfaOffset == Right.CfaOffset &&
-               Left.FPOffset == Right.FPOffset &&
-               Left.RAOffset == Right.RAOffset && Left.FromFP == Right.FromFP &&
-               Left.CfaRegSet == Right.CfaRegSet;
-      }
-
-      void BuildSFDE(const MCDwarfFrameInfo &DF) {
-        auto &FDE =
-            FDEs.emplace_back(DF, Streamer.getContext().createTempSymbol());
-        // This would have been set via ".cfi_return_column", but
-        // MCObjectStreamer doesn't emit an MCCFIInstruction for that. It just
-        // sets the DF.RAReg.
-        // FIXME: This also prevents providing a proper location for the error.
-        // LLVM doesn't change the return column itself, so this was
-        // externally-generated assembly.
-        if (DF.RAReg != RAReg) {
-          Streamer.getContext().reportWarning(
-              SMLoc(), "skipping SFrame FDE; non-default RA register " +
-                           Twine(DF.RAReg));
-          // Continue with the FDE to find any addtional errors. Discard it at
-          // the end.
-          FDE.Invalid = true;
-        }
-        MCSymbol *BaseLabel = DF.Begin;
-        SFrameFRE BaseFRE(BaseLabel);
-        if (!DF.IsSimple) {
-          for (const auto &CFI :
-               Streamer.getContext().getAsmInfo()->getInitialFrameState())
-            HandleCFI(FDE, BaseFRE, CFI);
-        }
-        FDE.FREs.push_back(BaseFRE);
-
-        for (const auto &CFI : DF.Instructions) {
-          // Instructions from InitialFrameState may not have a label, but if
-          // these instructions don't, then they are in dead code or otherwise
-          // unused.
-          auto *L = CFI.getLabel();
-          if (L && !L->isDefined())
-            continue;
-
-          SFrameFRE FRE = FDE.FREs.back();
-          HandleCFI(FDE, FRE, CFI);
-
-          // If nothing relevant but the location changed, don't add the FRE.
-          if (EqualIgnoringLocation(FRE, FDE.FREs.back()))
-            continue;
-
-          // If the location stayed the same, then update the current
-          // row. Otherwise, add a new one.
-          if (AtSameLocation(BaseLabel, L))
-            FDE.FREs.back() = FRE;
-          else {
-            FDE.FREs.push_back(FRE);
-            FDE.FREs.back().Label = L;
-            BaseLabel = L;
-          }
-        }
-        if (FDE.Invalid)
-          FDEs.pop_back();
-      }
-
-      void EmitPreamble() {
-        Streamer.emitInt16(SFRAME_MAGIC);
-        Streamer.emitInt8(SFRAME_VERSION_2);
-        uint8_t flags = 0;
-        // Do not set SFRAME_F_FDE_SORTED. Sorting is up to the linker.
-        // if (-fno-omit-frame-pointer)
-        //   flags |= FRAME_F_FRAME_POINTER
-        Streamer.emitInt8(flags);
-      }
-
-      void EmitHeader() {
-        EmitPreamble();
-        // sfh_abi_arch
-        Streamer.emitInt8(SFrameABI);
-        // sfh_cfa_fixed_fp_offset
-        Streamer.emitInt8(0);
-        // sfh_cfa_fixed_ra_offset
-        int8_t FRAO = 0;
-        if (SFrameABI == SFRAME_ABI_AMD64_ENDIAN_LITTLE) {
-          FRAO = -8; // As specified by the AMD64 abi
-        }
-        Streamer.emitInt8(FRAO);
-        // sfh_auxhdr_len
-        Streamer.emitInt8(0);
-
-        // shf_num_fdes
-        Streamer.emitInt32(FDEs.size());
-
-        // shf_num_fres
-        uint32_t TotalFREs = 0;
-        for (auto &FDE : FDEs)
-          TotalFREs += FDE.FREs.size();
-        Streamer.emitInt32(TotalFREs);
-
-        // shf_fre_len
-        Streamer.emitAbsoluteSymbolDiff(FRESubSectionEnd, FRESubSectionStart,
-                                        sizeof(int32_t));
-        // shf_fdeoff. With no sfh_auxhdr, these immediately follow this header.
-        Streamer.emitInt32(0);
-        // shf_freoff
-        Streamer.emitAbsoluteSymbolDiff(FRESubSectionStart, FDESubSectionStart,
-                                        sizeof(uint32_t));
-      }
-
-      void EmitFDEs() {
-        Streamer.emitLabel(FDESubSectionStart);
-        for (auto &FDE : FDEs) {
-          if (!FDE.Invalid)
-            FDE.Emit(Streamer, FDESubSectionStart);
-        }
-      }
-
-      void EmitFREs() {
-        Streamer.emitLabel(FRESubSectionStart);
-        for (auto FDE : FDEs) {
-          Streamer.emitLabel(FDE.FREStart);
-          for (auto &FRE : FDE.FREs) {
-            FRE.Emit(Streamer, FDE.DFrame.Begin, FDE.FDEFrag);
-          }
-        }
-        Streamer.emitLabel(FRESubSectionEnd);
-      }
-    };
+    }
+    Streamer.emitLabel(FRESubSectionEnd);
+  }
+};
 
 } // end anonymous namespace
 
