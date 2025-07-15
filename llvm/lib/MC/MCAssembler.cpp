@@ -1161,13 +1161,13 @@ bool MCAssembler::relaxDwarfCallFrameFragment(MCDwarfCallFrameFragment &DF) {
 }
 
 bool MCAssembler::relaxSFrameFragment(MCSFrameFragment &SF) {
-  MCContext &Context = getContext();
+  MCContext &C = getContext();
   int64_t Value;
   bool Abs = SF.getAddrDelta().evaluateAsAbsolute(Value, *this);
   if (!Abs) {
-    getContext().reportError(SF.getAddrDelta().getLoc(),
-                             "invalid CFI advance_loc expression in sframe");
-    SF.setAddrDelta(MCConstantExpr::create(0, Context));
+    C.reportError(SF.getAddrDelta().getLoc(),
+                  "invalid CFI advance_loc expression in sframe");
+    SF.setAddrDelta(MCConstantExpr::create(0, C));
     return false;
   }
 

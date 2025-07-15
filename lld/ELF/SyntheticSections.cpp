@@ -668,6 +668,83 @@ void EhFrameSection::writeTo(uint8_t *buf) {
     getPartition(ctx).ehFrameHdr->write();
 }
 
+#ifndef NDEBUG
+
+uint32_t CalculateFreBytesConsumed(const uint8_t *buf, uint32_t numFres,
+                                   int freType) {
+  uint32_t bytesConsumed = 0;
+  for (uint32_t i = 0; i < numFres; i++) {
+    // We can't tell if the offset is correct at this point, so just advance
+    // it.
+    switch (freType) {
+    case llvm::sframe::SFRAME_FRE_TYPE_ADDR1:
+      bytesConsumed += 1;
+      break;
+    case llvm::sframe::SFRAME_FRE_TYPE_ADDR2:
+      bytesConsumed += 2;
+      break;
+    case llvm::sframe::SFRAME_FRE_TYPE_ADDR4:
+      bytesConsumed += 4;
+      break;
+    }
+    uint8_t freInfo = *(buf + bytesConsumed);
+    bytesConsumed++;
+    int regs = (freInfo >> 1) & 0x7;
+    int offsetSize = 0;
+    switch ((freInfo >> 5) & 0x3) {
+    case llvm::sframe::SFRAME_FRE_OFFSET_1B:
+      offsetSize = 1;
+      break;
+    case llvm::sframe::SFRAME_FRE_OFFSET_2B:
+      offsetSize = 2;
+      break;
+    case llvm::sframe::SFRAME_FRE_OFFSET_4B:
+      offsetSize = 4;
+      break;
+    }
+    bytesConsumed += regs * offsetSize;
+  }
+  return bytesConsumed;
+}
+
+void CheckSFrames(const uint8_t* buf) {
+  // FIXME: This assumes host-endianness == target endianness
+  using llvm::sframe::sframe_func_desc_entry;
+  using llvm::sframe::sframe_header;
+  using llvm::sframe::sframe_preamble;
+  auto* hdr = reinterpret_cast<const sframe_header*>(buf);
+  assert(hdr->sfh_preamble.sfp_magic == llvm::sframe::SFRAME_MAGIC &&
+         "bad magic");
+  assert(hdr->sfh_preamble.sfp_version == 2 && "bad version");
+  assert(hdr->sfh_preamble.sfp_flags == (llvm::sframe::SFRAME_F_FDE_SORTED) &&
+         "no sorted flag");
+  // Ignore target-specific fields for now.
+  assert(hdr->sfh_auxhdr_len == 0 && "unrecognized aux_hdr");
+  assert(hdr->sfh_fdeoff == 0 && "space reserved for non-existent aux_hdr");
+  assert(hdr->sfh_num_fres >= hdr->sfh_num_fdes && "Not enough fres");
+  const uint8_t *freBuf = buf + sizeof(sframe_header) + hdr->sfh_fdeoff +
+                          (hdr->sfh_num_fdes * sizeof(sframe_func_desc_entry));
+  uint32_t countedFREs = 0;
+  uint32_t curFdeFreOff = 0;
+  for (uint32_t i = 0; i < hdr->sfh_num_fdes; i++) {
+    auto *fde = reinterpret_cast<const sframe_func_desc_entry *>(
+        buf + sizeof(sframe_header) + hdr->sfh_fdeoff +
+        (i * sizeof(sframe_func_desc_entry)));
+    countedFREs += fde->sfde_func_num_fres;
+    assert(countedFREs <= hdr->sfh_num_fres && "too many fres");
+    // The spec doesn't require fre_off to monotonically increase. But the
+    // implementation is coded in a way that it should. If it doesn't, something
+    // is wrong.
+    assert(fde->sfde_func_start_fre_off == curFdeFreOff && "freoff not increasing");
+    uint8_t freType = fde->sfde_func_info & llvm::sframe::fretype_mask;
+    assert(freType <= 2 && "invalid fretype");
+    curFdeFreOff +=
+        CalculateFreBytesConsumed(freBuf, fde->sfde_func_num_fres, freType);
+  }
+  assert(countedFREs == hdr->sfh_num_fres && "FRE count is wrong.");
+}
+#endif
+
 SFrameSection::SFrameSection(Ctx &ctx)
     : SyntheticSection(ctx, ".sframe", SHT_PROGBITS, SHF_ALLOC, 1) {}
 
@@ -695,12 +772,17 @@ void SFrameSection::addRecords(SFrameInputSection *sec, ArrayRef<RelTy> rels) {
     if (!isFdeLive(S)) {
       numFdes--;
       fde.live = false;
+      // Removing the fde here messes up the iterators, so defer
+      // until after the loop is done.
       numFres -= read32(ctx, fde.fdeBuf + offsetof(sframe_func_desc_entry,
                                                    sfde_func_num_fres));
       secFreSubSecLen -= fde.freSize;
     }
   }
   freSubSecLen += secFreSubSecLen;
+  sec->fdes.erase(std::remove_if(sec->fdes.begin(), sec->fdes.end(),
+                 [](auto &fde) {
+                   return !fde.live; }), sec->fdes.end());
 }
 
 template <class ELFT>
@@ -807,17 +889,10 @@ void SFrameSection::writeTo(uint8_t *buf) {
         {&pltSp, ctx.in.plt->getParent()->getLMA() + ctx.in.plt->headerSize});
   }
   for (SFrameInputSection *sec : sections) {
-    size_t off = 28;
-    for (const auto &rel : sec->relocations) {
-      while (rel.offset != off && off < 10000) {
-        Warn(ctx) << "expected rel at " << off << " Next at " << rel.offset;
-        off += 20;
-      }
-      off += 20;
-    }
     for (const auto &[fde, rel] : zip_equal(sec->fdes, sec->relocations)) {
-      if (fde.live)
-        sortedFdes.push_back({&fde, rel.sym->getVA(ctx) + rel.addend});
+      assert(rel.offset == fde.fdeBuf - sec->content().data() &&
+             "Miscalculated live fdes");
+      sortedFdes.push_back({&fde, rel.sym->getVA(ctx) + rel.addend});
     }
   }
   llvm::stable_sort(sortedFdes, [&](const FdeVa &l, const FdeVa &r) {
@@ -856,6 +931,7 @@ void SFrameSection::writeTo(uint8_t *buf) {
       continue;
     }
     int32_t displacement = va - secAddr;
+    // sframe_func_desc_entry (most fields)
     memcpy(fdeOutBuf, fde->fdeBuf, sizeof(sframe_func_desc_entry));
     write32(ctx,
             fdeOutBuf +
@@ -865,10 +941,15 @@ void SFrameSection::writeTo(uint8_t *buf) {
             fdeOutBuf +
                 offsetof(sframe_func_desc_entry, sfde_func_start_fre_off),
             freOutOff);
+    // fres
     memcpy(freOutBuf + freOutOff, fde->freBuf, fde->freSize);
     fdeOutBuf += sizeof(sframe_func_desc_entry);
     freOutOff += fde->freSize;
   }
+#ifndef NDEBUG
+  // decode the section as a check.
+  CheckSFrames(buf);
+#endif
 }
 
 GotSection::GotSection(Ctx &ctx)

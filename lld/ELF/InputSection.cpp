@@ -1457,6 +1457,9 @@ template <class ELFT> void SFrameInputSection::split() {
   }
 }
 
+extern uint32_t CalculateFreBytesConsumed(const uint8_t *buf, uint32_t numFres,
+                                          int freType);
+
 // .sframe
 template <class ELFT, class RelTy>
 void SFrameInputSection::split(ArrayRef<RelTy> rels) {
@@ -1520,7 +1523,7 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
   // are best handled in parallel.
   fdes.reserve(numFdes);
   size_t fdeOff = getFdeSubSecOff();
-  size_t freSubSecOff = getFdeSubSecOff() + freOff;
+  const size_t freSubSecOff = getFdeSubSecOff() + freOff;
   size_t fdeFreOff = 0;
   // fdes end where fres begin
   while (fdeOff < freSubSecOff) {
@@ -1558,6 +1561,17 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
     fde.freSize = lastFre - fde.freBuf;
     lastFre = fde.freBuf;
   });
+
+#ifndef NDEBUG
+  uint32_t curFreOff = 0;
+  for (const auto &fdeSP : fdes) {
+    const auto* fde = reinterpret_cast<const sframe_func_desc_entry*>(fdeSP.fdeBuf);
+    assert(curFreOff == fde->sfde_func_start_fre_off && "decode error");
+    curFreOff += CalculateFreBytesConsumed(
+        d.data() + freSubSecOff + fde->sfde_func_start_fre_off,
+        fde->sfde_func_num_fres, fde->sfde_func_info & llvm::sframe::fretype_mask);
+  }
+#endif
 
   // An sframe section should have one relocation per fde. No more, no less.
   assert(fdes.size() == rels.size() &&

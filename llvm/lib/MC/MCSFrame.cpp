@@ -138,7 +138,10 @@ struct SFrameFDE {
   MCSymbol *FREStart;
   // True when unwind info can't be described with an Sframe FDE.
   bool Invalid;
-  std::vector<SFrameFRE> FREs;
+  // Unwinding fres
+  SmallVector<SFrameFRE> FREs;
+  // .cfi_remember_state stack
+  SmallVector<SFrameFRE> SaveState;
   MCSFrameFragment *FDEFrag;
 
   SFrameFDE(const MCDwarfFrameInfo &DF, MCSymbol *FRES)
@@ -199,7 +202,7 @@ struct SFrameFDE {
 
 class SFrameEmitterImpl {
   MCObjectStreamer &Streamer;
-  std::vector<SFrameFDE> FDEs;
+  SmallVector<SFrameFDE> FDEs;
   uint8_t SFrameABI;
   // Target-specific convenience variables to detect when a CFI instruction
   // references these registers. Unlike in dwarf frame descriptions, they never
@@ -429,8 +432,24 @@ class SFrameEmitterImpl {
         FDE.Invalid = true;
         return;
       }
-      llvm_unreachable("unimplemented");
+      FDE.SaveState.push_back(FRE);
+      return;
       break;
+    case MCCFIInstruction::OpRestore:
+      // The first FRE generated has the original state.
+      if (CFI.getRegister() == FPReg)
+        FRE.FPOffset = FDE.FREs.front().FPOffset;
+      else if (CFI.getRegister() == RAReg)
+        FRE.RAOffset = FDE.FREs.front().RAOffset;
+      return; // Any other register is uninteresting.
+    case MCCFIInstruction::OpRestoreState:
+      // The cfi parser will have caught unbalanced directives earlier, so a
+      // mismatch here is an implementation error.
+      assert(!FDE.SaveState.empty() &&
+             "cfi_restore_state without cfi_save_state");
+      FRE = FDE.SaveState.back();
+      FDE.SaveState.pop_back();
+      return;
     case MCCFIInstruction::OpEscape:
       // This is a string of bytes that contains an aribtrary dwarf-expression
       // that may or may not affect uwnind info.
