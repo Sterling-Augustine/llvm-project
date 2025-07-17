@@ -140,8 +140,8 @@ private:
   template <class ELFT> void addSectionAux(SFrameInputSection *s);
 
   Defined *isFdeLive(Symbol &sym);
-  void buildFde(uint8_t *buf, uint32_t funcSize, uint32_t numFres, uint8_t type,
-                uint8_t repSize);
+  void buildSyntheticFde(uint8_t *buf, uint32_t funcSize, uint32_t numFres,
+                         uint8_t type, uint8_t repSize);
 
   uint64_t size = sizeof(llvm::sframe::sframe_header);
   // Synthesize plt fdes when set

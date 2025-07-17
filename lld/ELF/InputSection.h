@@ -439,7 +439,7 @@ public:
   // Most of the complexity in the sframe implementation stems from converting
   // between three kinds of offsets:
   //
-  // 1. sframe uses offset between its own internal structures, each with a
+  // 1. sframe uses offsets between its own internal structures, each with a
   //    different base.
   // 2. In input sections.
   // 3. In output sections.
@@ -468,14 +468,15 @@ public:
   // The FRE subsection is a collection of many
   // sframe_row_entries_addrx. Individual rows are variably sized. An FDE refers
   // to a set of rows by their offset and a count. Most of this code treats an
-  // FDE's entire set set as "an FRE", as they are only useful as a set.
+  // FDE's entire set as "an FRE", as they are only useful as a set.
   //
-  // SFrameInputSections cannot be concatenated; Ssections must be combined by
-  // creating a new header, appending the two subsections to each other and
-  // sorting. But because we want to garbage collect dead FDEs and their
-  // associated FREs, we can't just concatenate the subsections either. This
-  // also complicates converting from an input section offset to an output
-  // section offset.
+  // SFrameInputSections cannot be concatenated; Conceptually, sections are
+  // combined by creating a new header, appending the two subsections to each
+  // other and sorting. But because we want to garbage collect dead FDEs and
+  // their associated FREs, we can't just concatenate the subsections
+  // either. This also complicates converting from an input section offset to an
+  // output section offset. The sorting also makes relocations a bit tricky, as
+  // relocations refer to a fixed offset, and sorting changes that offset.
 
   // Decoded from the sframe header. These must match for each input section we
   // combine.

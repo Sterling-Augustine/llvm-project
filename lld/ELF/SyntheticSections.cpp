@@ -668,82 +668,6 @@ void EhFrameSection::writeTo(uint8_t *buf) {
     getPartition(ctx).ehFrameHdr->write();
 }
 
-#ifndef NDEBUG
-
-uint32_t CalculateFreBytesConsumed(const uint8_t *buf, uint32_t numFres,
-                                   int freType) {
-  uint32_t bytesConsumed = 0;
-  for (uint32_t i = 0; i < numFres; i++) {
-    // We can't tell if the offset is correct at this point, so just advance
-    // it.
-    switch (freType) {
-    case llvm::sframe::SFRAME_FRE_TYPE_ADDR1:
-      bytesConsumed += 1;
-      break;
-    case llvm::sframe::SFRAME_FRE_TYPE_ADDR2:
-      bytesConsumed += 2;
-      break;
-    case llvm::sframe::SFRAME_FRE_TYPE_ADDR4:
-      bytesConsumed += 4;
-      break;
-    }
-    uint8_t freInfo = *(buf + bytesConsumed);
-    bytesConsumed++;
-    int regs = (freInfo >> 1) & 0x7;
-    int offsetSize = 0;
-    switch ((freInfo >> 5) & 0x3) {
-    case llvm::sframe::SFRAME_FRE_OFFSET_1B:
-      offsetSize = 1;
-      break;
-    case llvm::sframe::SFRAME_FRE_OFFSET_2B:
-      offsetSize = 2;
-      break;
-    case llvm::sframe::SFRAME_FRE_OFFSET_4B:
-      offsetSize = 4;
-      break;
-    }
-    bytesConsumed += regs * offsetSize;
-  }
-  return bytesConsumed;
-}
-
-void CheckSFrames(const uint8_t* buf) {
-  // FIXME: This assumes host-endianness == target endianness
-  using llvm::sframe::sframe_func_desc_entry;
-  using llvm::sframe::sframe_header;
-  using llvm::sframe::sframe_preamble;
-  auto* hdr = reinterpret_cast<const sframe_header*>(buf);
-  assert(hdr->sfh_preamble.sfp_magic == llvm::sframe::SFRAME_MAGIC &&
-         "bad magic");
-  assert(hdr->sfh_preamble.sfp_version == 2 && "bad version");
-  assert(hdr->sfh_preamble.sfp_flags == (llvm::sframe::SFRAME_F_FDE_SORTED) &&
-         "no sorted flag");
-  // Ignore target-specific fields for now.
-  assert(hdr->sfh_auxhdr_len == 0 && "unrecognized aux_hdr");
-  assert(hdr->sfh_fdeoff == 0 && "space reserved for non-existent aux_hdr");
-  assert(hdr->sfh_num_fres >= hdr->sfh_num_fdes && "Not enough fres");
-  const uint8_t *freBuf = buf + sizeof(sframe_header) + hdr->sfh_fdeoff +
-                          (hdr->sfh_num_fdes * sizeof(sframe_func_desc_entry));
-  uint32_t countedFREs = 0;
-  uint32_t curFdeFreOff = 0;
-  for (uint32_t i = 0; i < hdr->sfh_num_fdes; i++) {
-    auto *fde = reinterpret_cast<const sframe_func_desc_entry *>(
-        buf + sizeof(sframe_header) + hdr->sfh_fdeoff +
-        (i * sizeof(sframe_func_desc_entry)));
-    countedFREs += fde->sfde_func_num_fres;
-    assert(countedFREs <= hdr->sfh_num_fres && "too many fres");
-    // The spec doesn't require fre_off to monotonically increase. But the
-    // implementation is coded in a way that it should. If it doesn't, something
-    // is wrong.
-    assert(fde->sfde_func_start_fre_off == curFdeFreOff && "freoff not increasing");
-    uint8_t freType = fde->sfde_func_info & llvm::sframe::fretype_mask;
-    assert(freType <= 2 && "invalid fretype");
-    curFdeFreOff +=
-        CalculateFreBytesConsumed(freBuf, fde->sfde_func_num_fres, freType);
-  }
-  assert(countedFREs == hdr->sfh_num_fres && "FRE count is wrong.");
-}
-#endif
 
 SFrameSection::SFrameSection(Ctx &ctx)
     : SyntheticSection(ctx, ".sframe", SHT_PROGBITS, SHF_ALLOC, 1) {}
@@ -772,8 +696,6 @@ void SFrameSection::addRecords(SFrameInputSection *sec, ArrayRef<RelTy> rels) {
     if (!isFdeLive(S)) {
       numFdes--;
       fde.live = false;
-      // Removing the fde here messes up the iterators, so defer
-      // until after the loop is done.
       numFres -= read32(ctx, fde.fdeBuf + offsetof(sframe_func_desc_entry,
                                                    sfde_func_num_fres));
       secFreSubSecLen -= fde.freSize;
@@ -832,14 +754,16 @@ void SFrameSection::finalizeContents() {
   size = fdeSubSecOff() + fdeSubSecLen() + freSubSecLen;
 }
 
-// Fill in the data that doesn't depend on output position or fre position. For
-// non-synthetic Fdes, this is copied from an input section.
-void SFrameSection::buildFde(uint8_t *buf, uint32_t funcSize, uint32_t numFres,
-                             uint8_t type, uint8_t repSize) {
+// Synthetic Fdes are created by the linker.
+void SFrameSection::buildSyntheticFde(uint8_t *buf, uint32_t funcSize,
+                                      uint32_t numFres, uint8_t type,
+                                      uint8_t repSize) {
   using llvm::sframe::sframe_func_desc_entry;
   memset(buf, 0, sizeof(sframe_func_desc_entry));
+  // sfde_func_start_address filled in by relocation-handling
   write32(ctx, buf + offsetof(sframe_func_desc_entry, sfde_func_size),
           funcSize);
+  // sfde_func_start_fre_off filled in by relocation-handling
   write32(ctx, buf + offsetof(sframe_func_desc_entry, sfde_func_num_fres),
           numFres);
   buf[offsetof(sframe_func_desc_entry, sfde_func_info)] = type;
@@ -850,6 +774,20 @@ void SFrameSection::writeTo(uint8_t *buf) {
   using llvm::sframe::sframe_func_desc_entry;
   using llvm::sframe::sframe_header;
   using llvm::sframe::sframe_preamble;
+
+#ifdef NDEBUG
+  uint32_t fresOut = 0;
+  for (SFrameInputSection *sec : sections) {
+    for (const auto &fde : sec->fdes) {
+      fresOut += reinterpret_cast<const sframe_func_desc_entry *>(fde.fdeBuf)
+                     ->sfde_func_num_fres;
+    }
+  }
+  // FIXME: 4 is for the number of plt fres, which should be retrieved from the
+  // target.
+  fresOut += needPlt ? 4 : 0;
+  assert(fresOut == numFres && "miscalculated numFres");
+#endif
 
   // Write the common parts of the header by copying from an input
   // section. We checked for compatibility earlier.
@@ -875,16 +813,18 @@ void SFrameSection::writeTo(uint8_t *buf) {
                               ctx.target->pltSFrameFres().size()};
   if (needPlt) {
     // TODO: funcSize, numFres, and repSize should come from target info.
-    buildFde(pltHdrFdeBuf, /* funcSize*/ 16, /* numFres */ 2, /* type */
-             (llvm::sframe::SFRAME_FDE_TYPE_PCINC |
-              llvm::sframe::SFRAME_FRE_TYPE_ADDR1),
-             /* repSize*/ 0);
+    buildSyntheticFde(pltHdrFdeBuf, /* funcSize*/ 16,
+                      /* numFres */ 2, /* type */
+                      (llvm::sframe::SFRAME_FDE_TYPE_PCINC |
+                       llvm::sframe::SFRAME_FRE_TYPE_ADDR1),
+                      /* repSize*/ 0);
     sortedFdes.push_back({&pltHdrSp, ctx.in.plt->getParent()->getLMA()});
-    buildFde(pltFdeBuf, /* funcSize*/ ctx.in.plt->getParent()->size - 16,
-             /* numFres */ 2, /* type */
-             (llvm::sframe::SFRAME_FDE_TYPE_PCMASK |
-              llvm::sframe::SFRAME_FRE_TYPE_ADDR1),
-             /* repSize*/ 16);
+    buildSyntheticFde(pltFdeBuf,
+                      /* funcSize*/ ctx.in.plt->getParent()->size - 16,
+                      /* numFres */ 2, /* type */
+                      (llvm::sframe::SFRAME_FDE_TYPE_PCMASK |
+                       llvm::sframe::SFRAME_FRE_TYPE_ADDR1),
+                      /* repSize*/ 16);
     sortedFdes.push_back(
         {&pltSp, ctx.in.plt->getParent()->getLMA() + ctx.in.plt->headerSize});
   }
@@ -895,6 +835,8 @@ void SFrameSection::writeTo(uint8_t *buf) {
       sortedFdes.push_back({&fde, rel.sym->getVA(ctx) + rel.addend});
     }
   }
+  assert(sortedFdes.size() == numFdes && "Missing or extra fdes");
+
   llvm::stable_sort(sortedFdes, [&](const FdeVa &l, const FdeVa &r) {
     return std::get<1>(l) < std::get<1>(r);
   });
@@ -946,10 +888,7 @@ void SFrameSection::writeTo(uint8_t *buf) {
     fdeOutBuf += sizeof(sframe_func_desc_entry);
     freOutOff += fde->freSize;
   }
-#ifndef NDEBUG
-  // decode the section as a check.
-  CheckSFrames(buf);
-#endif
+  assert(freOutOff == freSubSecLen && "Miscalculated freSubSecLen");
 }
 
 GotSection::GotSection(Ctx &ctx)

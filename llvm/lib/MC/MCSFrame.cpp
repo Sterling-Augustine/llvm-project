@@ -37,14 +37,14 @@ namespace {
 struct SFrameFRE {
   // An FRE describes how to find the registers when the PC is at this
   // Label from function start.
-  MCSymbol *Label = nullptr;
+  const MCSymbol *Label = nullptr;
   size_t CfaOffset = 0;
   size_t FPOffset = 0;
   size_t RAOffset = 0;
   bool FromFP = false;
   bool CfaRegSet = false;
 
-  SFrameFRE(MCSymbol *Start) : Label(Start) {}
+  SFrameFRE(const MCSymbol *Start) : Label(Start) {}
 
   void Emit(MCObjectStreamer &S, const MCSymbol *FuncBegin,
             MCSFrameFragment *FDEFrag) {
@@ -612,9 +612,8 @@ public:
     Streamer.emitLabel(FRESubSectionStart);
     for (auto FDE : FDEs) {
       Streamer.emitLabel(FDE.FREStart);
-      for (auto &FRE : FDE.FREs) {
+      for (auto &FRE : FDE.FREs)
         FRE.Emit(Streamer, FDE.DFrame.Begin, FDE.FDEFrag);
-      }
     }
     Streamer.emitLabel(FRESubSectionEnd);
   }
