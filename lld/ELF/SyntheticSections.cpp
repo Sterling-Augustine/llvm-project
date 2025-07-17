@@ -830,7 +830,8 @@ void SFrameSection::writeTo(uint8_t *buf) {
   }
   for (SFrameInputSection *sec : sections) {
     for (const auto &[fde, rel] : zip_equal(sec->fdes, sec->relocations)) {
-      assert(rel.offset == fde.fdeBuf - sec->content().data() &&
+      assert(rel.offset ==
+                 static_cast<uint64_t>(fde.fdeBuf - sec->content().data()) &&
              "Miscalculated live fdes");
       sortedFdes.push_back({&fde, rel.sym->getVA(ctx) + rel.addend});
     }
