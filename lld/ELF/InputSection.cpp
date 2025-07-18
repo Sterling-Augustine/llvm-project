@@ -1475,8 +1475,8 @@ uint32_t CalculateFreBytesConsumed(const uint8_t *buf, uint32_t numFres,
       offsetSize = 4;
       break;
     }
-      bytesConsumed += regs * offsetSize;
-    }
+    bytesConsumed += regs * offsetSize;
+  }
   return bytesConsumed;
 }
 
@@ -1633,7 +1633,7 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
   // sizing them, as two fdes could refer to the same set of fres.
   const uint8_t *lastFre = d.data() + d.size();
   std::for_each(fdes.rbegin(), fdes.rend(), [&lastFre, this, d](auto &fde) {
-    //assert(lastFre > fde.freBuf && "FREs out of expected order");
+    assert(lastFre > fde.freBuf && "FREs out of expected order");
     if (lastFre <= fde.freBuf) {
       Err(file->ctx) << getObjMsg(d.data() - content().data());
       assert(lastFre > fde.freBuf && "FREs out of expected order");
@@ -1645,9 +1645,6 @@ void SFrameInputSection::split(ArrayRef<RelTy> rels) {
   // An sframe section should have one relocation per fde. No more, no less.
   assert(fdes.size() == rels.size() &&
          "Unexpected number of relocations for sframe section.");
-#ifdef NDEBUG
-  CheckSFrames(
-#endif
 }
 
 // Split SHF_STRINGS section. Such section is a sequence of
