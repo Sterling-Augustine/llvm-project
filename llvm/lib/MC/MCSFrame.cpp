@@ -592,8 +592,7 @@ public:
     Streamer.emitInt32(TotalFREs);
 
     // shf_fre_len
-    Streamer.emitAbsoluteSymbolDiff(FRESubSectionEnd, FRESubSectionStart,
-                                    sizeof(int32_t));
+    Streamer.emitInt32(FDEs.size() * sizeof(sframe_func_desc_entry));
     // shf_fdeoff. With no sfh_auxhdr, these immediately follow this header.
     Streamer.emitInt32(0);
     // shf_freoff
