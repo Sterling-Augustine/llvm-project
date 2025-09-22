@@ -16,6 +16,7 @@
 #include "SyntheticSections.h"
 #include "Target.h"
 #include "lld/Common/DWARF.h"
+#include "llvm/Object/SFrameParser.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Compression.h"
 #include "llvm/Support/Endian.h"
@@ -219,6 +220,8 @@ uint64_t SectionBase::getOffset(uint64_t offset) const {
         return isec->outSecOff + es->getParentOffset(offset);
     return offset;
   }
+  case SFrame:
+    return offset;
   case Merge:
     const MergeInputSection *ms = cast<MergeInputSection>(this);
     if (InputSection *isec = ms->getParent())
@@ -241,6 +244,8 @@ OutputSection *SectionBase::getOutputSection() {
     sec = ms->getParent();
   else if (auto *eh = dyn_cast<EhInputSection>(this))
     sec = eh->getParent();
+  else if (auto *sf = dyn_cast<SFrameInputSection>(this))
+    sec = sf->getParent();
   else
     return cast<OutputSection>(this);
   return sec ? sec->getParent() : nullptr;
@@ -507,8 +512,8 @@ void InputSection::copyRelocations(Ctx &ctx, uint8_t *buf,
       auto *d = dyn_cast<Defined>(&sym);
       if (!d) {
         if (!isDebugSection(*sec) && sec->name != ".eh_frame" &&
-            sec->name != ".gcc_except_table" && sec->name != ".got2" &&
-            sec->name != ".toc") {
+            sec->name != ".sframe" && sec->name != ".gcc_except_table" &&
+            sec->name != ".got2" && sec->name != ".toc") {
           uint32_t secIdx = cast<Undefined>(sym).discardedSecIdx;
           Elf_Shdr_Impl<ELFT> sec = file->template getELFShdrs<ELFT>()[secIdx];
           Warn(ctx) << "relocation refers to a discarded section: "
@@ -1454,6 +1459,84 @@ static size_t findNull(StringRef s, size_t entSize) {
   llvm_unreachable("");
 }
 
+template <class ELFT>
+SFrameInputSection::SFrameInputSection(ObjFile<ELFT> &f,
+                                       const typename ELFT::Shdr &header,
+                                       StringRef name)
+    : InputSectionBase(f, header, name, InputSectionBase::SFrame) {}
+
+SyntheticSection *SFrameInputSection::getParent() const {
+  return cast_or_null<SyntheticSection>(parent);
+}
+
+template <class ELFT> void SFrameInputSection::split() {
+  const RelsOrRelas<ELFT> rels = relsOrRelas<ELFT>(/*supportsCrel=*/false);
+  // getReloc expects the relocations to be sorted by r_offset. See the comment
+  // in scanRelocs.
+  if (rels.areRelocsRel()) {
+    SmallVector<typename ELFT::Rel, 0> storage;
+    split<ELFT>(sortRels(rels.rels, storage));
+  } else {
+    SmallVector<typename ELFT::Rela, 0> storage;
+    split<ELFT>(sortRels(rels.relas, storage));
+  }
+}
+
+// .sframe
+template <class ELFT, class RelTy>
+void SFrameInputSection::split(ArrayRef<RelTy> rels) {
+  using SFrameParser = llvm::object::SFrameParser<ELFT::Endianness>;
+
+  Expected<SFrameParser> parser =
+      SFrameParser::create(content(), 0); // No addresses yet;
+
+  if (auto E = parser.takeError()) {
+    Err(file->ctx) << parser.takeError() << "\n>>> in "
+                   << getObjMsg(0) << "\n";
+    return;
+  }
+  auto &header = parser->getHeader();
+  if ((parser->getPreamble().Flags.value() &
+       llvm::sframe::Flags::FDEFuncStartPCRel) !=
+      sframe::Flags::FDEFuncStartPCRel) {
+    // Require a producer that has fixed sframe v2 errata one. Gnu binutils
+    // fixed the errata soon after the original release, and llvm never
+    // generated it. So these should be rare.
+    Err(file->ctx)
+        << "unsupported .sframe format. FDE start addresses are not pc-relative"
+        << "\n>>> defined in " << getObjMsg(0);
+    return;
+  }
+  // The parser handles AuxHdrs and should have errored during create. If we
+  // ever encounter a non-zero sized one, many things will need to be fixed.
+  assert(header.AuxHdrLen == 0 && "Unknown .sframe auxhdr");
+
+  if (header.NumFDEs != rels.size()) {
+    Err(file->ctx) << "Unexpected number of relocations for sframe section."
+                   << "Expected " << header.NumFDEs << " but found "
+                   << rels.size() << " in\n"
+                   << getObjMsg(0);
+    return;
+  }
+  fdeFREBufs.resize(header.NumFDEs);
+  fdeFRESizes.resize(header.NumFDEs);
+  uint32_t lastOffset = header.FRELen;
+  // FRE sizes are most easily calculated last to first.
+  auto freSize = fdeFRESizes.rbegin();
+  auto freBuf = fdeFREBufs.rbegin();
+  auto fdes = parser->fdes();
+  if (!fdes)
+    return;
+  const uint8_t *freSubSecBuf =
+      content().data() + sizeof(header) + header.FREOff;
+  for (auto fde = fdes->rbegin(); fde != fdes->rend();
+       ++fde, ++freSize, ++freBuf) {
+    *freBuf = freSubSecBuf + fde->StartFREOff;
+    *freSize = lastOffset - fde->StartFREOff;
+    lastOffset = fde->StartFREOff;
+  }
+}
+
 // Split SHF_STRINGS section. Such section is a sequence of
 // null-terminated strings.
 void MergeInputSection::splitStrings(StringRef s, size_t entSize) {
@@ -1582,3 +1665,21 @@ template void EhInputSection::split<ELF32LE>();
 template void EhInputSection::split<ELF32BE>();
 template void EhInputSection::split<ELF64LE>();
 template void EhInputSection::split<ELF64BE>();
+
+template SFrameInputSection::SFrameInputSection(ObjFile<ELF32LE> &,
+                                                const ELF32LE::Shdr &,
+                                                StringRef);
+template SFrameInputSection::SFrameInputSection(ObjFile<ELF32BE> &,
+                                                const ELF32BE::Shdr &,
+                                                StringRef);
+template SFrameInputSection::SFrameInputSection(ObjFile<ELF64LE> &,
+                                                const ELF64LE::Shdr &,
+                                                StringRef);
+template SFrameInputSection::SFrameInputSection(ObjFile<ELF64BE> &,
+                                                const ELF64BE::Shdr &,
+                                                StringRef);
+
+template void SFrameInputSection::split<ELF32LE>();
+template void SFrameInputSection::split<ELF32BE>();
+template void SFrameInputSection::split<ELF64LE>();
+template void SFrameInputSection::split<ELF64BE>();

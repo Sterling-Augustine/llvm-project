@@ -18,6 +18,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/TinyPtrVector.h"
+#include "llvm/BinaryFormat/SFrame.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/Compiler.h"
 
@@ -64,6 +65,7 @@ public:
     Synthetic,
     Spill,
     EHFrame,
+    SFrame,
     Merge,
     Output,
     Class,
@@ -408,11 +410,74 @@ public:
   SmallVector<Relocation, 0> rels;
 };
 
-// This is a section that is added directly to an output section
-// instead of needing special combination via a synthetic section. This
-// includes all input sections with the exceptions of SHF_MERGE and
-// .eh_frame. It also includes the synthetic sections themselves.
+// This corresponds to an .sframe section of an input file.
+// .sframe is in three parts: A short header, an array of fixed-size sframe FDEs
+// (called the FDE subsection), and then a series of variable-length FREs
+// (called the FRE subsection).
+class SFrameInputSection : public InputSectionBase {
+public:
+  template <class ELFT>
+  SFrameInputSection(ObjFile<ELFT> &f, const typename ELFT::Shdr &header,
+                     StringRef name);
+  static bool classof(const SectionBase *s) { return s->kind() == SFrame; }
+  template <class ELFT> void split();
+  template <class ELFT, class RelTy> void split(ArrayRef<RelTy> rels);
+
+  // Most of the complexity in the sframe implementation stems from converting
+  // between three kinds of offsets:
+  //
+  // 1. sframe uses offsets between its own internal structures, each with a
+  //    different base.
+  // 2. In input sections.
+  // 3. In output sections.
+  //
+  // Here is a summary of the different offsets.
+  //
+  // Within a section, the sframe_header is at offset zero.
+  //
+  // Offsets in the sframe_header are relative to start of the FDE subsection.
+  //
+  // Within a section, the FDE subsection starts at:
+  // sizeof(sframe_header) + sfh_auxhdr_len.
+  //
+  // The FDE subsection is an array of fixed-length FuncDescEntries, so
+  // its size can be calculated with num_fdes * sizeof(fde).
+  //
+  // Offsets in a FuncDescEntry are relative to the start of the FRE subsection.
+  //
+  // Within a section, the FRE subsection starts at:
+  // sizeof(Header) + AuxHeaderLen + FREOffset
+  //
+  // FREOffset also marks the end of the FDE subsection, so is calculated
+  // using the size of the FDE subsection.
+  //
+  // The FRE subsection is a collection of many Frame row entires. Individual
+  // rows are variably sized. An FDE refers to a set of rows by their offset and
+  // a count. Most of this code treats an FDE's entire set of individual FREs as
+  // "an FRE", as at link time they are always handled as a complete set.
+  //
+  // SFrameInputSections cannot be concatenated; Conceptually, sections are
+  // combined by creating a new header, appending the two subsections to each
+  // other and sorting. But because we want to garbage collect dead FDEs and
+  // their associated FREs, we can't just concatenate the subsections
+  // either. This also complicates converting from an input section offset to an
+  // output section offset. The sorting also makes relocations a bit tricky, as
+  // relocations refer to a fixed offset, and sorting changes that offset.
+
+  // Track data for each FDE's FREs. Stored here to avoid recalculating
+  // every time it is needed.
+  SmallVector<const uint8_t *> fdeFREBufs;
+  SmallVector<uint32_t> fdeFRESizes;
+
+  SyntheticSection *getParent() const;
+};
+
+// This is a section that is added directly to an output section instead of
+// needing special combination via a synthetic section. This includes all input
+// sections with the exceptions of SHF_MERGE, .eh_frame, and .sframe. It also
+// includes the synthetic sections themselves.
 class InputSection : public InputSectionBase {
+
 public:
   InputSection(InputFile *f, StringRef name, uint32_t type, uint64_t flags,
                uint32_t addralign, uint32_t entsize, ArrayRef<uint8_t> data,

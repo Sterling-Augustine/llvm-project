@@ -1399,7 +1399,9 @@ template <class ELFT> void elf::scanRelocations(Ctx &ctx) {
     for (ELFFileBase *f : ctx.objectFiles) {
       auto fn = [f, &ctx]() {
         for (InputSectionBase *s : f->getSections()) {
-          if (s && s->kind() == SectionBase::Regular && s->isLive() &&
+          if (s &&
+              ((s->kind() == SectionBase::Regular && s->isLive()) ||
+               (s->kind() == SectionBase::SFrame)) &&
               (s->flags & SHF_ALLOC) &&
               !(s->type == SHT_ARM_EXIDX && ctx.arg.emachine == EM_ARM))
             ctx.target->scanSection(*s);

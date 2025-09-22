@@ -58,6 +58,17 @@ public:
   virtual void addPltHeaderSymbols(InputSection &isec) const {}
   virtual void addPltSymbols(InputSection &isec, uint64_t off) const {}
 
+  // Return sframe fres to cover the plt header and subsequent entries.
+  virtual const ArrayRef<uint8_t> pltHeaderSFrameFres() const {
+    static const SmallVector<uint8_t> empty;
+    return empty;
+  }
+  // Return sframe fres to cover the plt entries.
+  virtual const ArrayRef<uint8_t> pltSFrameFres() const {
+    static const SmallVector<uint8_t> empty;
+    return empty;
+  }
+
   // Returns true if a relocation only uses the low bits of a value such that
   // all those bits are in the same page. For example, if the relocation
   // only uses the low 12 bits in a system with 4k pages. If this is true, the

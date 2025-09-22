@@ -376,6 +376,13 @@ void MarkLive<ELFT, TrackWhyLive>::run() {
   // referenced by .eh_frame sections, so we scan them for that here.
   for (EhInputSection *eh : ctx.ehInputSections)
     scanEhFrameSection(*eh);
+  // A relocation from an sframe section into another is never enough to keep
+  // that other section live. So do not mark their targets live. Further, sframe
+  // sections have no relocations that point into them, so they all must be
+  // marked live for now. Dead sframe FDEs will be garbage collected later.
+  for (SFrameInputSection *sf : ctx.sFrameInputSections)
+    sf->markLive();
+
   for (InputSectionBase *sec : ctx.inputSections) {
     if (sec->flags & SHF_GNU_RETAIN) {
       enqueue(sec, /*offset=*/0, /*sym=*/nullptr, {std::nullopt, "retained"});

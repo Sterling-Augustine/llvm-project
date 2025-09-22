@@ -1884,6 +1884,12 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
       for (Partition &part : ctx.partitions)
         finalizeSynthetic(ctx, part.ehFrame.get());
     }
+    // Similarly for sframe sections.
+    {
+      llvm::TimeTraceScope timeScope("Finalize .sframe");
+      for (Partition &part : ctx.partitions)
+        finalizeSynthetic(ctx, part.sFrame.get());
+    }
   }
 
   // If the previous code block defines any non-hidden symbols (e.g.
@@ -1964,7 +1970,15 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
       }
     }
   }
-
+#if 0
+  // Defer sframe-finalization until now to include unwind info for plt entries.
+  {
+    llvm::TimeTraceScope timeScope("Finalize .sframe");
+    for (Partition &part : ctx.partitions)
+      finalizeSynthetic(ctx, part.sFrame.get());
+    scanSFrameRelocations<ELFT>(ctx);
+  }
+#endif
   {
     llvm::TimeTraceScope timeScope("Add symbols to symtabs");
     // Now that we have defined all possible global symbols including linker-
@@ -2464,6 +2478,11 @@ Writer<ELFT>::createPhdrs(Partition &part) {
       part.ehFrame->getParent() && part.ehFrameHdr->getParent())
     addHdr(PT_GNU_EH_FRAME, part.ehFrameHdr->getParent()->getPhdrFlags())
         ->add(part.ehFrameHdr->getParent());
+
+  // PT_GNU_SFRAME is a special segment pointing to .sframe
+  if (part.sFrame->isNeeded() && part.sFrame->getParent())
+    addHdr(PT_GNU_SFRAME, part.sFrame->getParent()->getPhdrFlags())
+        ->add(part.sFrame->getParent());
 
   if (ctx.arg.osabi == ELFOSABI_OPENBSD) {
     // PT_OPENBSD_MUTABLE makes the dynamic linker fill the segment with

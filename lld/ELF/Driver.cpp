@@ -3361,6 +3361,8 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
           continue;
         if (LLVM_UNLIKELY(isa<EhInputSection>(s)))
           ctx.ehInputSections.push_back(cast<EhInputSection>(s));
+        else if (LLVM_UNLIKELY(isa<SFrameInputSection>(s)))
+          ctx.sFrameInputSections.push_back(cast<SFrameInputSection>(s));
         else
           ctx.inputSections.push_back(s);
       }
@@ -3465,6 +3467,10 @@ template <class ELFT> void LinkerDriver::link(opt::InputArgList &args) {
   // Merge .riscv.attributes sections.
   if (ctx.arg.emachine == EM_RISCV)
     mergeRISCVAttributesSections(ctx);
+
+  // SFrameInputSections cannot be directly appended to each other, so must
+  // always be programmatically merged.
+  combineSFrameSections(ctx);
 
   {
     llvm::TimeTraceScope timeScope("Assign sections");
