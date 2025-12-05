@@ -671,14 +671,16 @@ void SFrameSection::addRecords(SFrameInputSection *sec, ArrayRef<RelTy> rels) {
     Err(ctx) << sec << ": " << fdes.takeError();
     return;
   }
+  uint32_t idx = 0;
   for (const auto &[fde, freSize, rel] :
        zip_equal(*fdes, sec->fdeFRESizes, rels)) {
-    Symbol &S = sec->file->getRelocTargetSym(rel);
-    if (isFDELive(S)) {
+    if (isFDELive(sec->file->getRelocTargetSym(rel))) {
+      sec->liveFDEs.push_back(idx);
       ++numFDEs;
       numFREs += fde.NumFREs;
       freSubSecLen += freSize;
     }
+    ++idx;
   }
 }
 
@@ -743,10 +745,8 @@ void SFrameSection::writeTo(uint8_t *buf) {
   SmallVector<SFrameSectionPiece> pieces;
   pieces.reserve(numFDEs);
   for (SFrameInputSection *sec : sections) {
-    for (auto &rel : sec->relocations) {
-      // The relocation's offset refers to the first field of the FDE, so
-      // use it to find the index to the relevant FDE and FRE data.
-      size_t idx = (rel.offset - sizeof(Header)) % sizeof(FuncDescEntry);
+    for (uint32_t idx : sec->liveFDEs) {
+      auto rel = sec->relocations[idx];
       pieces.push_back({
           sec->getRelocTargetVA(ctx, rel, 0), // FuncAddr
           sec->content().data() + rel.offset, // FDEBuf

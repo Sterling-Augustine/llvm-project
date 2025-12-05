@@ -468,6 +468,7 @@ public:
   // every time it is needed.
   SmallVector<const uint8_t *> fdeFREBufs;
   SmallVector<uint32_t> fdeFRESizes;
+  SmallVector<uint32_t> liveFDEs;
 
   SyntheticSection *getParent() const;
 };
