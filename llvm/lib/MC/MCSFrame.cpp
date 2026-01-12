@@ -385,15 +385,6 @@ class SFrameEmitterImpl {
     case MCCFIInstruction::OpAdjustCfaOffset:
       return setCFAOffset(FRE, CFI.getLoc(), FRE.CFAOffset + CFI.getOffset());
     case MCCFIInstruction::OpRememberState:
-      if (FDE.FREs.size() == 1) {
-        // Error for gas compatibility: If the initial FRE isn't complete,
-        // then any state is incomplete.  FIXME: Dwarf doesn't error here.
-        // Why should sframe?
-        Streamer.getContext().reportWarning(
-            CFI.getLoc(), "skipping SFrame FDE; .cfi_remember_state without "
-                          "prior SFrame FRE state");
-        return false;
-      }
       FDE.SaveState.push_back(FRE);
       return true;
     case MCCFIInstruction::OpRestore:

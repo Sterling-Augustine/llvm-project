@@ -181,3 +181,16 @@ remember_restore_state:
         .long 0
 
         .cfi_endproc
+
+# This used to crash because the fre list was empty.
+# Actual save-restore functionality is tested above.
+        .align 1024
+early_remember_restore_state:
+# CHECK:        FuncDescEntry [3] {
+# CHECK:          Start FRE Offset: 0x3C
+# CHECK-NEXT:         Num FREs: 1
+        .cfi_startproc
+        .cfi_remember_state
+        .long 0
+
+        .cfi_endproc
